@@ -8,6 +8,21 @@ Notable changes to oxihist, by release. The format follows
 
 ### Fixed
 
+- **`ThreadedHist` got slower as threads were added.** Every fill took a
+  shared read lock to find the thread's copy. The copies now live in
+  thread-local storage (the `thread_local` crate), so a fill touches no shared
+  state. 24 M fills with 12 threads: 15 s before, 32 ms now.
+- **`fill_par` cloned the template once per rayon split** (about 1 300 copies
+  of a large histogram). It now fills a few chunks per thread. With an 8 MB
+  template: 533 ms before, 20 ms now.
+
+### Changed
+
+- `ThreadedHist::with_local` panics if its closure re-enters the same
+  accumulator (it used to deadlock).
+
+### Fixed
+
 - A value just below a regular axis's upper edge could land in the overflow
   bin (in about a quarter of cases, depending on rounding). The axis now
   compares against its edges directly.
