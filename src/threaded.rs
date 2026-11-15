@@ -1,9 +1,10 @@
 //! Filling one histogram from many threads: [`ThreadedHist`] and, with the
 //! `rayon` feature, [`fill_par`].
 
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex, PoisonError, RwLock};
-use std::thread::ThreadId;
+use std::cell::RefCell;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+use thread_local::ThreadLocal;
 
 use crate::axis::Value;
 use crate::error::Result;
@@ -32,8 +33,9 @@ impl<S: Storage, const D: usize> Mergeable for Histogram<S, D> {
 /// A multithreaded fill accumulator, the analog of ROOT's `TThreadedObject`.
 ///
 /// Share `&ThreadedHist` across threads and fill from any of them: each thread
-/// fills its own copy of the template (made on first use), so threads never
-/// contend. [`merge`](ThreadedHist::merge) combines the copies at the end.
+/// fills its own copy of the template (made on first use), and finding that
+/// copy takes no shared lock, so fills scale with the number of threads.
+/// [`merge`](ThreadedHist::merge) combines the copies at the end.
 ///
 /// ```
 /// use oxihist::{Hist, ThreadedHist};
@@ -50,7 +52,11 @@ impl<S: Storage, const D: usize> Mergeable for Histogram<S, D> {
 /// ```
 pub struct ThreadedHist<H: Mergeable> {
     template: H,
-    slots: RwLock<HashMap<ThreadId, Arc<Mutex<H>>>>,
+    /// One copy per thread. `ThreadLocal` finds the calling thread's slot
+    /// without taking a shared lock, so filling threads never touch a common
+    /// cache line (a shared `RwLock` here made fills slower with more threads).
+    slots: ThreadLocal<RefCell<H>>,
+    count: AtomicUsize,
 }
 
 impl<H: Mergeable> ThreadedHist<H> {
@@ -59,34 +65,28 @@ impl<H: Mergeable> ThreadedHist<H> {
     pub fn new(template: H) -> Self {
         ThreadedHist {
             template,
-            slots: RwLock::new(HashMap::new()),
+            slots: ThreadLocal::new(),
+            count: AtomicUsize::new(0),
         }
     }
 
     /// Run `f` on the calling thread's own copy.
+    ///
+    /// # Panics
+    ///
+    /// If `f` calls `with_local` (or a `fill`) on the same accumulator again:
+    /// the thread's copy is already borrowed.
     pub fn with_local<R>(&self, f: impl FnOnce(&mut H) -> R) -> R {
-        let id = std::thread::current().id();
-        let slot = {
-            let read = self.slots.read().unwrap_or_else(PoisonError::into_inner);
-            read.get(&id).cloned()
-        };
-        let slot = slot.unwrap_or_else(|| {
-            let mut write = self.slots.write().unwrap_or_else(PoisonError::into_inner);
-            write
-                .entry(id)
-                .or_insert_with(|| Arc::new(Mutex::new(self.template.clone())))
-                .clone()
+        let slot = self.slots.get_or(|| {
+            self.count.fetch_add(1, Ordering::Relaxed);
+            RefCell::new(self.template.clone())
         });
-        let mut h = slot.lock().unwrap_or_else(PoisonError::into_inner);
-        f(&mut h)
+        f(&mut slot.borrow_mut())
     }
 
     /// The number of per-thread copies made so far.
     pub fn num_slots(&self) -> usize {
-        self.slots
-            .read()
-            .unwrap_or_else(PoisonError::into_inner)
-            .len()
+        self.count.load(Ordering::Relaxed)
     }
 
     /// Combine every thread's copy into one (the template, if no thread
@@ -94,25 +94,13 @@ impl<H: Mergeable> ThreadedHist<H> {
     ///
     /// # Errors
     ///
-    /// Never for copies of one template; the error of [`Mergeable::merge`]
-    /// otherwise.
+    /// The error of [`Mergeable::merge`] if two copies cannot be combined;
+    /// copies of one template always can, including when growing category
+    /// axes met different categories on different threads.
     pub fn merge(self) -> Result<H> {
         let mut acc = self.template;
-        let slots = self
-            .slots
-            .into_inner()
-            .unwrap_or_else(PoisonError::into_inner);
-        for (_, slot) in slots {
-            let h = Arc::try_unwrap(slot).map_or_else(
-                |shared| {
-                    shared
-                        .lock()
-                        .unwrap_or_else(PoisonError::into_inner)
-                        .clone()
-                },
-                |m| m.into_inner().unwrap_or_else(PoisonError::into_inner),
-            );
-            acc.merge(&h)?;
+        for slot in self.slots {
+            acc.merge(&slot.into_inner())?;
         }
         Ok(acc)
     }
@@ -191,8 +179,11 @@ impl<S: MeanStorage> ThreadedHist<Histogram<S, 1>> {
     }
 }
 
-/// Fill a histogram from a slice in parallel (the `rayon` feature): each task
-/// folds into a clone of `template`, and the partial histograms are merged.
+/// Fill a histogram from a slice in parallel (the `rayon` feature).
+///
+/// The slice is cut into a few chunks per worker thread; each chunk is filled
+/// into one clone of `template` and the clones are merged. The cost is a
+/// handful of clones per thread, so even a large template stays cheap.
 ///
 /// ```
 /// use oxihist::{fill_par, Hist};
@@ -200,6 +191,11 @@ impl<S: MeanStorage> ThreadedHist<Histogram<S, 1>> {
 /// let h = fill_par(&Hist::reg(100, 0.0, 100.0).int64(), &data, |h, &x| h.fill(x));
 /// assert_eq!(h.sum(true), 1000);
 /// ```
+///
+/// # Panics
+///
+/// If two partial histograms cannot be merged, which cannot happen for copies
+/// of one template.
 #[cfg(feature = "rayon")]
 pub fn fill_par<H, T, F>(template: &H, data: &[T], fill: F) -> H
 where
@@ -208,22 +204,23 @@ where
     F: Fn(&mut H, &T) + Sync,
 {
     use rayon::prelude::*;
-    data.par_iter()
-        .fold(
-            || template.clone(),
-            |mut h, item| {
+    // A few chunks per thread balance the load without many clones.
+    let chunks = rayon::current_num_threads().max(1) * 4;
+    let chunk_len = data.len().div_ceil(chunks).max(1);
+    data.par_chunks(chunk_len)
+        .map(|chunk| {
+            let mut h = template.clone();
+            for item in chunk {
                 fill(&mut h, item);
-                h
-            },
-        )
-        .reduce(
-            || template.clone(),
-            |mut a, b| {
-                a.merge(&b)
-                    .expect("fill_par: every partial is a clone of one template");
-                a
-            },
-        )
+            }
+            h
+        })
+        .reduce_with(|mut a, b| {
+            a.merge(&b)
+                .expect("fill_par: partial histograms are copies of one template");
+            a
+        })
+        .unwrap_or_else(|| template.clone())
 }
 
 #[cfg(test)]

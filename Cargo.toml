@@ -13,6 +13,8 @@ description = "Pure-Rust histograms for high-energy physics, modelled on boost-h
 
 [dependencies]
 rayon = { version = "1", optional = true }
+# Per-thread storage without a shared lock, for ThreadedHist.
+thread_local = "1.1"
 serde = { version = "1", features = ["derive"], optional = true }
 # Until these are on crates.io they are git dependencies on release tags;
 # `version` is kept so the switch is just dropping `git`/`tag`. They must name
