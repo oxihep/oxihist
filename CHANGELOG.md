@@ -6,6 +6,8 @@ Notable changes to oxihist, by release. The format follows
 
 ## [Unreleased]
 
+## [0.2.0]
+
 ### Changed
 
 - **Breaking:** `Histogram::bins` returns a `Vec` (a compact copy, first axis
