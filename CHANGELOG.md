@@ -6,6 +6,23 @@ Notable changes to oxihist, by release. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking:** `Histogram::bins` returns a `Vec` (a compact copy, first axis
+  fastest, flow bins included) instead of a slice: storage now keeps spare
+  slots for growing category axes.
+- **Breaking:** `AxisKind` and `Value` are `#[non_exhaustive]`, so new axis
+  kinds and value types can be added without a breaking release. Match them
+  with a `_` arm.
+
+### Fixed
+
+- **Growing a category axis was quadratic.** Every new category moved every
+  bin, and every fill scanned the categories linearly. Growing axes now keep
+  doubling spare capacity, and category axes with more than 16 categories keep
+  a hash index. 16 000 categories × 50 bins, 96 000 fills: 36 s before, 14 ms
+  now.
+
 ## [0.1.1]
 
 ### Changed

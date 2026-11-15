@@ -20,7 +20,7 @@ use crate::storage::{CountStorage, MeanStorage, Storage};
 /// assert_eq!(h.value([2]), Some(4.0));
 /// assert_eq!(h.variance([2]), Some(10.0)); // 1² + 3²
 /// ```
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(
     feature = "serde",
@@ -31,7 +31,11 @@ use crate::storage::{CountStorage, MeanStorage, Storage};
 )]
 pub struct Histogram<S: Storage, const D: usize> {
     axes: Vec<Axis>,
+    /// Storage: `cap[i]` slots along axis `i`, the first axis varying fastest.
+    /// `cap[i]` is the axis's extent, except for a growing category axis,
+    /// which keeps spare (default) slots so a new category rarely moves bins.
     bins: Vec<S::Bin>,
+    cap: Vec<usize>,
     /// A short identifier, e.g. `"pt"`. Writing to a ROOT file uses it as the
     /// key name.
     pub name: String,
@@ -39,6 +43,20 @@ pub struct Histogram<S: Storage, const D: usize> {
     pub title: String,
     #[cfg_attr(feature = "serde", serde(skip))]
     storage: PhantomData<S>,
+}
+
+/// Two histograms are equal when their axes, name, title and every bin are;
+/// spare storage kept for growing axes does not count.
+impl<S: Storage, const D: usize> PartialEq for Histogram<S, D> {
+    fn eq(&self, other: &Self) -> bool {
+        self.axes == other.axes
+            && self.name == other.name
+            && self.title == other.title
+            && self
+                .cells()
+                .zip(other.cells())
+                .all(|((_, a), (_, b))| self.bins[a] == other.bins[b])
+    }
 }
 
 impl<S: Storage, const D: usize> Histogram<S, D> {
@@ -50,10 +68,12 @@ impl<S: Storage, const D: usize> Histogram<S, D> {
 
     pub(crate) fn from_axes(axes: Vec<Axis>) -> Self {
         assert_eq!(axes.len(), D, "a {D}-D histogram needs {D} axes");
-        let n = axes.iter().map(Axis::extent).product();
+        let cap: Vec<usize> = axes.iter().map(Axis::extent).collect();
+        let n = cap.iter().product();
         Histogram {
             axes,
             bins: vec![S::Bin::default(); n],
+            cap,
             name: String::new(),
             title: String::new(),
             storage: PhantomData,
@@ -124,8 +144,8 @@ impl<S: Storage, const D: usize> Histogram<S, D> {
     /// Every bin's accumulator, flow bins included, the first axis varying
     /// fastest; [`shape`](Histogram::shape)`(true)` gives the extents.
     #[must_use]
-    pub fn bins(&self) -> &[S::Bin] {
-        &self.bins
+    pub fn bins(&self) -> Vec<S::Bin> {
+        self.cells().map(|(_, o)| self.bins[o].clone()).collect()
     }
 
     /// The number of bins along each axis, with or without the flow bins.
@@ -143,7 +163,7 @@ impl<S: Storage, const D: usize> Histogram<S, D> {
     fn strides(&self) -> [usize; D] {
         let mut s = [1; D];
         for i in 1..D {
-            s[i] = s[i - 1] * self.axes[i - 1].extent();
+            s[i] = s[i - 1] * self.cap[i - 1];
         }
         s
     }
@@ -158,15 +178,24 @@ impl<S: Storage, const D: usize> Histogram<S, D> {
         Some(off)
     }
 
-    /// The bin index (`-1..=size` per axis) of storage offset `off`.
-    fn index_of(&self, mut off: usize) -> [isize; D] {
-        let mut idx = [0; D];
-        for (i, a) in self.axes.iter().enumerate() {
-            let e = a.extent();
-            idx[i] = a.index_at(off % e);
-            off /= e;
-        }
-        idx
+    /// Every bin (flow bins included) as its index and storage offset, the
+    /// first axis varying fastest. Spare storage slots are skipped.
+    fn cells(&self) -> impl Iterator<Item = ([isize; D], usize)> + '_ {
+        let ext = self.shape(true);
+        let strides = self.strides();
+        let under: [isize; D] = std::array::from_fn(|i| isize::from(self.axes[i].underflow()));
+        let total: usize = ext.iter().product();
+        (0..total).map(move |mut k| {
+            let mut idx = [0isize; D];
+            let mut off = 0;
+            for i in 0..D {
+                let p = k % ext[i];
+                k /= ext[i];
+                idx[i] = p as isize - under[i];
+                off += p * strides[i];
+            }
+            (idx, off)
+        })
     }
 
     /// Bin `idx`'s accumulator (`-1` is the underflow bin, `size` the
@@ -196,8 +225,8 @@ impl<S: Storage, const D: usize> Histogram<S, D> {
     /// Every bin's index and accumulator, the first axis varying fastest; with
     /// `flow`, the flow bins too.
     pub fn iter(&self, flow: bool) -> impl Iterator<Item = ([isize; D], &S::Bin)> + '_ {
-        self.bins.iter().enumerate().filter_map(move |(o, b)| {
-            let idx = self.index_of(o);
+        self.cells().filter_map(move |(idx, o)| {
+            let b = &self.bins[o];
             let in_range = idx
                 .iter()
                 .zip(&self.axes)
@@ -263,8 +292,15 @@ impl<S: Storage, const D: usize> Histogram<S, D> {
     /// differ in any other way.
     pub fn add(&mut self, other: &Self) -> Result<()> {
         if self.same_binning(other) {
-            for (a, b) in self.bins.iter_mut().zip(&other.bins) {
-                S::merge(a, b);
+            if self.cap == other.cap {
+                for (a, b) in self.bins.iter_mut().zip(&other.bins) {
+                    S::merge(a, b);
+                }
+            } else {
+                for (idx, o) in other.cells() {
+                    let off = self.offset(idx).expect("same binning");
+                    S::merge(&mut self.bins[off], &other.bins[o]);
+                }
             }
             return Ok(());
         }
@@ -297,8 +333,8 @@ impl<S: Storage, const D: usize> Histogram<S, D> {
             }
             maps[i] = Some(map);
         }
-        for (o, b) in other.bins.iter().enumerate() {
-            let mut idx = other.index_of(o);
+        for (mut idx, o) in other.cells() {
+            let b = &other.bins[o];
             for (i, map) in maps.iter().enumerate() {
                 if let Some(map) = map {
                     // Growing axes have no flow bins, so every index is in range.
@@ -330,18 +366,34 @@ impl<S: Storage, const D: usize> Histogram<S, D> {
         Ok(self.offset(idx))
     }
 
-    /// Add a category to axis `i` and move every bin to its new offset.
+    /// Add a category to axis `i` (a growing category axis, which has no flow
+    /// bins). Spare capacity is used when there is some; otherwise the axis's
+    /// capacity doubles and every bin moves once, so growing to `n` categories
+    /// costs `O(n)` moves per bin in all, not `O(n)` per category.
     fn grow(&mut self, i: usize, v: Value<'_>) {
-        let mut old = self.clone();
-        let old_bins = std::mem::take(&mut old.bins);
-        self.axes[i].grow(v);
-        let n = self.axes.iter().map(Axis::extent).product();
-        self.bins = vec![S::Bin::default(); n];
-        for (o, b) in old_bins.into_iter().enumerate() {
-            let idx = old.index_of(o);
-            let off = self.offset(idx).expect("growing keeps every existing bin");
-            self.bins[off] = b;
+        let new_size = self.axes[i].size() + 1;
+        if new_size > self.cap[i] {
+            let mut cap = self.cap.clone();
+            cap[i] = (self.cap[i] * 2).max(new_size).max(4);
+            let n = cap.iter().product();
+            let mut bins = vec![S::Bin::default(); n];
+            let mut strides = [1usize; D];
+            for k in 1..D {
+                strides[k] = strides[k - 1] * cap[k - 1];
+            }
+            let moves: Vec<([isize; D], usize)> = self.cells().collect();
+            let mut old = std::mem::take(&mut self.bins);
+            for (idx, o) in moves {
+                let mut off = 0;
+                for k in 0..D {
+                    off += self.axes[k].position(idx[k]).expect("a stored bin") * strides[k];
+                }
+                bins[off] = std::mem::take(&mut old[o]);
+            }
+            self.bins = bins;
+            self.cap = cap;
         }
+        self.axes[i].grow(v);
     }
 
     /// Apply `f` to the bin `values` fall in.
@@ -371,8 +423,8 @@ impl<S: Storage, const D: usize> Histogram<S, D> {
             Histogram::<S, E>::from_axes(keep.iter().map(|&a| self.axes[a].clone()).collect());
         out.name.clone_from(&self.name);
         out.title.clone_from(&self.title);
-        for (o, b) in self.bins.iter().enumerate() {
-            let idx = self.index_of(o);
+        for (idx, o) in self.cells() {
+            let b = &self.bins[o];
             let target: [isize; E] = std::array::from_fn(|k| idx[keep[k]]);
             let off = out.offset(target).expect("same axes, same bins");
             S::merge(&mut out.bins[off], b);
@@ -417,8 +469,8 @@ impl<S: Storage, const D: usize> Histogram<S, D> {
         out.name.clone_from(&self.name);
         out.title.clone_from(&self.title);
         let n = n as isize;
-        for (o, b) in self.bins.iter().enumerate() {
-            let mut idx = self.index_of(o);
+        for (mut idx, o) in self.cells() {
+            let b = &self.bins[o];
             let i = idx[axis];
             idx[axis] = if (0..n).contains(&i) {
                 i / factor as isize

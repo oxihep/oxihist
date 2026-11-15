@@ -151,3 +151,31 @@ fn fill_par_with_growing_categories() {
     assert_eq!(h.axis(0).size(), 7);
     assert_eq!(h.sum(true), 10_000);
 }
+
+proptest! {
+    /// Growing categories while filling gives the same histogram as declaring
+    /// every category up front (in first-seen order), whatever the number of
+    /// categories: below and above the hash-index threshold, and across
+    /// several capacity doublings.
+    #[test]
+    fn growth_equals_categories_declared_up_front(
+        events in prop::collection::vec((0usize..60, 0.0..3.0f64), 0..400),
+    ) {
+        let mut grown = Hist::str_cat::<&str>(&[]).growth().reg(3, 0.0, 3.0).weight();
+        let names: Vec<String> = (0..60).map(|i| format!("c{i}")).collect();
+        let mut seen: Vec<&str> = Vec::new();
+        for &(c, x) in &events {
+            grown.fill(names[c].as_str(), x);
+            if !seen.contains(&names[c].as_str()) {
+                seen.push(&names[c]);
+            }
+        }
+        let mut declared = Hist::str_cat(&seen).growth().reg(3, 0.0, 3.0).weight();
+        for &(c, x) in &events {
+            declared.fill(names[c].as_str(), x);
+        }
+        prop_assert_eq!(&grown, &declared);
+        prop_assert_eq!(grown.bins(), declared.bins());
+        prop_assert_eq!(grown.values(true), declared.values(true));
+    }
+}
