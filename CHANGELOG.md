@@ -6,6 +6,8 @@ Notable changes to oxihist, by release. The format follows
 
 ## [Unreleased]
 
+## [0.1.1]
+
 ### Fixed
 
 - **`ThreadedHist` got slower as threads were added.** Every fill took a
