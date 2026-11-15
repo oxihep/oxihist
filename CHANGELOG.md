@@ -23,6 +23,13 @@ Notable changes to oxihist, by release. The format follows
   a hash index. 16 000 categories × 50 bins, 96 000 fills: 36 s before, 14 ms
   now.
 
+## [0.1.1]
+
+### Changed
+
+- `ThreadedHist::with_local` panics if its closure re-enters the same
+  accumulator (it used to deadlock).
+
 ### Fixed
 
 - **`ThreadedHist` got slower as threads were added.** Every fill took a
@@ -32,14 +39,6 @@ Notable changes to oxihist, by release. The format follows
 - **`fill_par` cloned the template once per rayon split** (about 1 300 copies
   of a large histogram). It now fills a few chunks per thread. With an 8 MB
   template: 533 ms before, 20 ms now.
-
-### Changed
-
-- `ThreadedHist::with_local` panics if its closure re-enters the same
-  accumulator (it used to deadlock).
-
-### Fixed
-
 - A value just below a regular axis's upper edge could land in the overflow
   bin (in about a quarter of cases, depending on rounding). The axis now
   compares against its edges directly.
