@@ -13,6 +13,7 @@ use crate::error::{Error, Result};
 /// convert into it, so `h.fill(3.2)`, `h.fill(7)`, `h.fill("ee")` and
 /// `h.fill(true)` all work on an axis of the matching kind.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
 pub enum Value<'a> {
     /// A real number, for [`Regular`](AxisKind::Regular) and
     /// [`Variable`](AxisKind::Variable) axes (and integer axes, which floor it).
@@ -73,6 +74,7 @@ impl From<bool> for Value<'_> {
 /// The binning of an [`Axis`].
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
 pub enum AxisKind {
     /// `bins` equal-width bins over `[lo, hi)`.
     Regular {
@@ -125,6 +127,48 @@ pub struct Axis {
     pub label: String,
     underflow: bool,
     overflow: bool,
+    /// A hash index of the categories, kept once a category axis has more than
+    /// a few: filling looks a category up on every call, and a linear scan of
+    /// thousands of strings dominated the fill. Derived data, so it is not
+    /// compared or serialized (an axis read back scans until it next grows).
+    #[cfg_attr(feature = "serde", serde(skip))]
+    lookup: CategoryLookup,
+}
+
+/// Categories above which a category axis keeps a hash index.
+const LOOKUP_MIN: usize = 16;
+
+#[derive(Debug, Clone, Default)]
+struct CategoryLookup {
+    strs: std::collections::HashMap<String, usize>,
+    ints: std::collections::HashMap<i64, usize>,
+}
+
+/// The index is derived from the categories, so it never makes two axes differ.
+impl PartialEq for CategoryLookup {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl Axis {
+    /// Rebuild the hash index from the categories, if there are enough.
+    fn index_categories(&mut self) {
+        self.lookup = CategoryLookup::default();
+        match &self.kind {
+            AxisKind::StrCategory { categories, .. } if categories.len() > LOOKUP_MIN => {
+                for (i, c) in categories.iter().enumerate() {
+                    self.lookup.strs.entry(c.clone()).or_insert(i);
+                }
+            }
+            AxisKind::IntCategory { categories, .. } if categories.len() > LOOKUP_MIN => {
+                for (i, &c) in categories.iter().enumerate() {
+                    self.lookup.ints.entry(c).or_insert(i);
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 /// Where a value falls on an axis.
@@ -137,13 +181,16 @@ pub(crate) enum Locate {
 
 impl Axis {
     fn with_kind(kind: AxisKind, underflow: bool, overflow: bool) -> Axis {
-        Axis {
+        let mut axis = Axis {
             kind,
             name: String::new(),
             label: String::new(),
             underflow,
             overflow,
-        }
+            lookup: CategoryLookup::default(),
+        };
+        axis.index_categories();
+        axis
     }
 
     /// `bins` equal-width bins over `[lo, hi)`, with under- and overflow.
@@ -469,7 +516,12 @@ impl Axis {
                 let Value::Str(s) = v else {
                     return Err(mismatch("a string"));
                 };
-                match categories.iter().position(|c| c == s) {
+                let found = if self.lookup.strs.len() == categories.len() {
+                    self.lookup.strs.get(s).copied()
+                } else {
+                    categories.iter().position(|c| c == s)
+                };
+                match found {
                     Some(i) => i as isize,
                     None if *growth => return Ok(Locate::Grow),
                     None => n,
@@ -481,7 +533,12 @@ impl Axis {
                     Value::Num(x) if x.fract() == 0.0 && x.is_finite() => x as i64,
                     _ => return Err(mismatch("an integer")),
                 };
-                match categories.iter().position(|&c| c == i) {
+                let found = if self.lookup.ints.len() == categories.len() {
+                    self.lookup.ints.get(&i).copied()
+                } else {
+                    categories.iter().position(|&c| c == i)
+                };
+                match found {
                     Some(k) => k as isize,
                     None if *growth => return Ok(Locate::Grow),
                     None => n,
@@ -528,15 +585,40 @@ impl Axis {
     /// Add the category `v` (which [`locate`](Axis::locate) reported as
     /// [`Locate::Grow`]) as a new last bin.
     pub(crate) fn grow(&mut self, v: Value<'_>) {
-        match (&mut self.kind, v) {
+        let n = match (&mut self.kind, v) {
             (AxisKind::StrCategory { categories, .. }, Value::Str(s)) => {
                 categories.push(s.to_owned());
+                if self.lookup.strs.len() + 1 == categories.len() {
+                    self.lookup
+                        .strs
+                        .entry(s.to_owned())
+                        .or_insert(categories.len() - 1);
+                }
+                categories.len()
             }
-            (AxisKind::IntCategory { categories, .. }, Value::Int(i)) => categories.push(i),
+            (AxisKind::IntCategory { categories, .. }, Value::Int(i)) => {
+                categories.push(i);
+                if self.lookup.ints.len() + 1 == categories.len() {
+                    self.lookup.ints.entry(i).or_insert(categories.len() - 1);
+                }
+                categories.len()
+            }
             (AxisKind::IntCategory { categories, .. }, Value::Num(x)) => {
                 categories.push(x as i64);
+                if self.lookup.ints.len() + 1 == categories.len() {
+                    self.lookup
+                        .ints
+                        .entry(x as i64)
+                        .or_insert(categories.len() - 1);
+                }
+                categories.len()
             }
             _ => unreachable!("only a growing category axis grows"),
+        };
+        // Crossing the threshold (or an axis read back without its index):
+        // build the index from scratch.
+        if n > LOOKUP_MIN && self.lookup.strs.len() + self.lookup.ints.len() != n {
+            self.index_categories();
         }
     }
 
@@ -548,11 +630,6 @@ impl Axis {
             return None;
         }
         Some((i + isize::from(self.underflow)) as usize)
-    }
-
-    /// The bin index (`-1..=size`) at storage position `p`.
-    pub(crate) fn index_at(&self, p: usize) -> isize {
-        p as isize - isize::from(self.underflow)
     }
 }
 
