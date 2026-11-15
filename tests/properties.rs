@@ -69,3 +69,85 @@ fn serde_round_trip() {
     let back: Histogram<Weight, 2> = serde_json::from_str(&json).unwrap();
     assert_eq!(back, h);
 }
+
+proptest! {
+    /// A value below `hi` is never put in the overflow bin, and the last bin's
+    /// upper edge belongs to the overflow.
+    #[test]
+    fn regular_axis_upper_edge(lo in -1e6..1e6f64, width in 1e-3..1e6f64, bins in 1usize..500) {
+        let hi = lo + width;
+        let mut h = Hist::reg(bins, lo, hi).int64();
+        let below = hi.next_down(); // the largest f64 < hi
+        if below >= lo {
+            h.fill(below);
+            prop_assert_eq!(h.value([bins as isize - 1]), Some(1.0));
+        }
+        h.fill(hi);
+        prop_assert_eq!(h.value([bins as isize]), Some(1.0));
+    }
+
+    /// Filling copies of a growing-category template on different "threads",
+    /// in any order, then merging, equals one serial fill.
+    #[test]
+    fn growing_categories_merge_like_a_serial_fill(
+        events in prop::collection::vec((0usize..6, 0.0..4.0f64), 0..120),
+        cut in 0usize..120,
+    ) {
+        let names = ["ee", "mumu", "emu", "tautau", "gg", "qq"];
+        let template = Hist::str_cat::<&str>(&[]).growth().reg(4, 0.0, 4.0).weight();
+        let fill = |evs: &[(usize, f64)]| {
+            let mut h = template.clone();
+            for &(c, x) in evs {
+                h.fill(names[c], x);
+            }
+            h
+        };
+        let cut = cut.min(events.len());
+        let (mut a, b) = (fill(&events[cut..]), fill(&events[..cut]));
+        a.add(&b).unwrap();
+        let serial = fill(&events);
+        prop_assert_eq!(a.axis(0).size(), serial.axis(0).size());
+        for c in 0..serial.axis(0).size() {
+            let name = serial.axis(0).bin_label(c).unwrap();
+            let ca = (0..a.axis(0).size()).find(|&k| a.axis(0).bin_label(k).as_deref() == Some(&name)).unwrap();
+            for x in -1..=4 {
+                prop_assert_eq!(a.value([ca as isize, x]), serial.value([c as isize, x]));
+            }
+        }
+    }
+}
+
+#[test]
+fn threaded_fill_with_growing_categories() {
+    use oxihist::ThreadedHist;
+    let acc = ThreadedHist::new(Hist::str_cat::<&str>(&[]).growth().int64());
+    std::thread::scope(|s| {
+        for t in 0..4 {
+            let acc = &acc;
+            s.spawn(move || {
+                for i in 0..50 {
+                    acc.fill(["a", "b", "c", "d"][(i + t) % 4]);
+                }
+            });
+        }
+    });
+    let h = acc.merge().unwrap();
+    assert_eq!(h.axis(0).size(), 4);
+    assert_eq!(h.sum(true), 200);
+}
+
+#[cfg(feature = "rayon")]
+#[test]
+fn fill_par_with_growing_categories() {
+    let data: Vec<usize> = (0..10_000).map(|i| i % 7).collect();
+    let names = ["a", "b", "c", "d", "e", "f", "g"];
+    let h = oxihist::fill_par(
+        &Hist::str_cat::<&str>(&[]).growth().int64(),
+        &data,
+        |h, &i| {
+            h.fill(names[i]);
+        },
+    );
+    assert_eq!(h.axis(0).size(), 7);
+    assert_eq!(h.sum(true), 10_000);
+}

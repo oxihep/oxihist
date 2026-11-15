@@ -252,16 +252,63 @@ impl<S: Storage, const D: usize> Histogram<S, D> {
     /// Add `other`'s bins to this histogram's, as if this one had also been
     /// filled with everything `other` was.
     ///
+    /// Growing category axes may have met their categories in a different
+    /// order, or met different ones (two threads filling copies of one
+    /// template, say). They are merged by label: categories `other` has and
+    /// `self` lacks are added to `self`.
+    ///
     /// # Errors
     ///
     /// [`Error::BinningMismatch`] (leaving `self` unchanged) if the binnings
-    /// differ.
+    /// differ in any other way.
     pub fn add(&mut self, other: &Self) -> Result<()> {
-        if !self.same_binning(other) {
+        if self.same_binning(other) {
+            for (a, b) in self.bins.iter_mut().zip(&other.bins) {
+                S::merge(a, b);
+            }
+            return Ok(());
+        }
+        let compatible = self
+            .axes
+            .iter()
+            .zip(&other.axes)
+            .all(|(a, b)| a.same_binning(b) || a.merges_by_label(b));
+        if !compatible {
             return Err(Error::BinningMismatch("the histograms' axes differ".into()));
         }
-        for (a, b) in self.bins.iter_mut().zip(&other.bins) {
-            S::merge(a, b);
+        // For each axis, where each of `other`'s in-range bins lands in `self`,
+        // growing `self` by the categories it lacks.
+        let mut maps: Vec<Option<Vec<isize>>> = vec![None; D];
+        for i in 0..D {
+            if self.axes[i].same_binning(&other.axes[i]) {
+                continue;
+            }
+            let mut map = Vec::with_capacity(other.axes[i].size());
+            for k in 0..other.axes[i].size() {
+                let v = other.axes[i].category_value(k);
+                let to = match self.axes[i].locate(v, i)? {
+                    Locate::Index(j) => j,
+                    Locate::Grow => {
+                        self.grow(i, v);
+                        self.axes[i].size() as isize - 1
+                    }
+                };
+                map.push(to);
+            }
+            maps[i] = Some(map);
+        }
+        for (o, b) in other.bins.iter().enumerate() {
+            let mut idx = other.index_of(o);
+            for (i, map) in maps.iter().enumerate() {
+                if let Some(map) = map {
+                    // Growing axes have no flow bins, so every index is in range.
+                    idx[i] = map[idx[i] as usize];
+                }
+            }
+            let off = self
+                .offset(idx)
+                .expect("every bin of `other` maps into `self`");
+            S::merge(&mut self.bins[off], b);
         }
         Ok(())
     }
