@@ -11,13 +11,12 @@ attached: [oxiroot](https://github.com/oxihep/oxiroot) reads and writes these
 histograms as ROOT `TH1`/`TH2`/`TH3`/`TProfile` objects, the way uproot does
 for `hist`.
 
-Part of the [oxihep](https://github.com/oxihep) family:
 [oxiplot](https://github.com/oxihep/oxiplot) draws them (the `plot` feature)
 and [oxifit](https://github.com/oxihep/oxifit) fits them (the `fit` feature).
 
 ```toml
 [dependencies]
-oxihist = { git = "https://github.com/oxihep/oxihist" }
+oxihist = { git = "https://github.com/oxihep/oxihist", tag = "v0.1.0" }
 ```
 
 ```rust
@@ -34,8 +33,7 @@ assert_eq!(h.variance([8]), Some(0.25));   // Σw²
 let mut m = Hist::reg(40, 0.0, 200.0).str_cat::<&str>(&[]).growth().int64();
 m.fill(91.2, "ee");
 m.fill(125.0, "mumu");
-let mass = m.project([0])?;                // sum over the channels
-# Ok::<(), oxihist::Error>(())
+let mass = m.project([0]).unwrap();       // sum over the channels
 ```
 
 ## What is in it
@@ -60,6 +58,24 @@ underflow and `size` for the overflow bin.
 | `serde` | `Serialize`/`Deserialize` for histograms, axes and bins |
 | `plot` | oxiplot's data traits: `Axes::hist(&h)`, `Axes::profile(&p)`, `Axes::hist2d(&h2)` |
 | `fit` | oxifit's `FitData`: `h.fit(&model)` on a 1-D histogram |
+
+## The oxihep family
+
+Rust crates for high-energy physics, split the way Python's
+[Scikit-HEP](https://scikit-hep.org) is. Each works on its own; together they
+cover reading data, histogramming, fitting and plotting.
+
+| Crate | What it does | Python counterpart |
+| --- | --- | --- |
+| [oxiroot](https://github.com/oxihep/oxiroot) | Read and write ROOT files: `TTree`, RNTuple, ROOT histograms and graphs | uproot |
+| **oxihist** (this crate) | Histograms: typed axes, weighted and profile storages | boost-histogram, hist |
+| [oxiplot](https://github.com/oxihep/oxiplot) | Plotting to SVG/PNG/PDF with an mplhep look | matplotlib, mplhep |
+| [oxifit](https://github.com/oxihep/oxifit) | Curve fitting with Minuit2, and a `TFormula` engine | iminuit |
+| [oxistats](https://github.com/oxihep/oxistats) | Statistics, HEP lineshapes and intervals | scipy.stats, hepstats |
+| [oxiparticle](https://github.com/oxihep/oxiparticle) | PDG particle data and ID decoding | particle |
+
+The crates are not on crates.io yet: depend on them from GitHub, pinned to a
+release tag, as shown above.
 
 ## Not yet
 
