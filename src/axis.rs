@@ -427,18 +427,16 @@ impl Axis {
         let idx = match &self.kind {
             AxisKind::Regular { bins, lo, hi } => {
                 let x = numeric(v).ok_or_else(|| mismatch("a number"))?;
-                if x.is_nan() {
+                // Compare against the edges themselves, not the scaled
+                // coordinate: rounding can scale a value just below `hi` to
+                // exactly `bins`, which must still be the last bin.
+                if x.is_nan() || x >= *hi {
                     n
+                } else if x < *lo {
+                    -1
                 } else {
                     let z = (x - lo) / (hi - lo) * *bins as f64;
-                    if z < 0.0 {
-                        -1
-                    } else if z >= *bins as f64 {
-                        n
-                    } else {
-                        // Rounding can put a value just below `hi` at `bins`.
-                        (z.floor() as isize).min(n - 1)
-                    }
+                    (z.floor() as isize).clamp(0, n - 1)
                 }
             }
             AxisKind::Variable { edges } => {
@@ -499,6 +497,32 @@ impl Axis {
             },
         };
         Ok(Locate::Index(idx))
+    }
+
+    /// Whether two category axes can be merged by label even though their
+    /// categories differ: both grow, they are the same kind of category axis,
+    /// and they keep the same flow bins.
+    pub(crate) fn merges_by_label(&self, other: &Axis) -> bool {
+        let same_kind = matches!(
+            (&self.kind, &other.kind),
+            (
+                AxisKind::StrCategory { growth: true, .. },
+                AxisKind::StrCategory { growth: true, .. }
+            ) | (
+                AxisKind::IntCategory { growth: true, .. },
+                AxisKind::IntCategory { growth: true, .. }
+            )
+        );
+        same_kind && self.underflow == other.underflow && self.overflow == other.overflow
+    }
+
+    /// The fill value naming category bin `i` of a category axis.
+    pub(crate) fn category_value(&self, i: usize) -> Value<'_> {
+        match &self.kind {
+            AxisKind::StrCategory { categories, .. } => Value::Str(&categories[i]),
+            AxisKind::IntCategory { categories, .. } => Value::Int(categories[i]),
+            _ => unreachable!("only category axes have category values"),
+        }
     }
 
     /// Add the category `v` (which [`locate`](Axis::locate) reported as

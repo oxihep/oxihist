@@ -6,6 +6,16 @@ Notable changes to oxihist, by release. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- A value just below a regular axis's upper edge could land in the overflow
+  bin (in about a quarter of cases, depending on rounding). The axis now
+  compares against its edges directly.
+- Merging histograms whose growing category axes met different categories, or
+  met them in a different order, failed with `BinningMismatch`; so did
+  `ThreadedHist::merge`, and `fill_par` panicked. `add` now merges such axes by
+  label.
+
 ## [0.1.0]
 
 First release: 1-, 2- and 3-D histograms with regular, variable, integer,
