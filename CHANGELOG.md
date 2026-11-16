@@ -6,6 +6,21 @@ Notable changes to oxihist, by release. The format follows
 
 ## [Unreleased]
 
+## [0.4.3]
+
+### Changed
+
+- **Faster fills on category and integer axes.** A fill of an integer, a
+  known category or a boolean now skips the general locate (which also
+  handles growth, value conversion and errors), as numbers on regular and
+  variable axes already did. Per fill, string categories 12–14 → 6–7 ns
+  (8, 20 and 200 categories; the `fill` bench: 69 → 125 M/s), integer
+  categories 5.5–12 → 3.9 ns, integer axis 4.8 → 3.4 ns, boolean axis
+  7.0 → 3.5 ns. Regular and variable axes are unchanged.
+- The category index hashes with foldhash instead of std's SipHash (still
+  seeded per process), and is kept from 5 categories instead of 17: with a
+  fast hash a lookup beats comparing strings one by one.
+
 ## [0.4.2]
 
 ### Changed

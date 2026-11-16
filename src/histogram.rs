@@ -356,8 +356,8 @@ impl<S: Storage, const D: usize> Histogram<S, D> {
     /// does not keep).
     #[inline(always)]
     fn locate(&mut self, values: [Value<'_>; D]) -> Result<Option<usize>> {
-        // Fast path: numbers on regular or variable axes, which neither grow
-        // nor fail. Every axis is checked before a flow bin drops the fill,
+        // Fast path, inlined: numbers on regular or variable axes, which
+        // neither grow nor fail. Every axis is checked before a flow bin drops the fill,
         // so the general path below sees exactly what it did before.
         let strides = self.strides();
         let mut off = 0;
@@ -376,9 +376,35 @@ impl<S: Storage, const D: usize> Histogram<S, D> {
         Ok((!dropped).then_some(off))
     }
 
-    /// [`locate`](Histogram::locate) for every axis kind and value.
+    /// [`locate`](Histogram::locate) for every other axis kind and value.
+    /// It first tries each axis's native values (integers, known categories,
+    /// booleans, numbers), which neither grow nor fail; only a new category,
+    /// a converted value or a mismatch reaches the fully general code.
     #[inline(never)]
     fn locate_general(&mut self, values: [Value<'_>; D]) -> Result<Option<usize>> {
+        let strides = self.strides();
+        let mut off = 0;
+        let mut dropped = false;
+        for i in 0..D {
+            let fast = match values[i] {
+                Value::Num(x) => self.axes[i]
+                    .fast_position(x)
+                    .or_else(|| self.axes[i].other_position(values[i])),
+                v => self.axes[i].other_position(v),
+            };
+            match fast {
+                Some(Some(p)) => off += p * strides[i],
+                Some(None) => dropped = true,
+                None => return self.locate_slow(values),
+            }
+        }
+        Ok((!dropped).then_some(off))
+    }
+
+    /// [`locate`](Histogram::locate) for every axis kind and value, growing
+    /// category axes as needed.
+    #[inline(never)]
+    fn locate_slow(&mut self, values: [Value<'_>; D]) -> Result<Option<usize>> {
         let mut idx = [0isize; D];
         for i in 0..D {
             idx[i] = match self.axes[i].locate(values[i], i)? {
