@@ -1,5 +1,10 @@
 //! Filling one histogram from many threads: [`ThreadedHist`] and, with the
 //! `rayon` feature, [`fill_par`].
+//!
+//! Both work for any [`Mergeable`] type, not just oxihist's own histograms:
+//! a crate implements `Mergeable` (with its own error type) for its histogram
+//! types and gets the accumulator and the parallel fill for free. oxiroot does
+//! this for ROOT's `TH1`/`TH2`/`TH3`, profiles and graphs.
 
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -12,8 +17,15 @@ use crate::histogram::Histogram;
 use crate::storage::{CountStorage, MeanStorage, Storage};
 
 /// Histograms that combine into one: the reduction behind multithreaded
-/// fills.
+/// fills and in-memory merges.
+///
+/// Implement it for your own histogram type, with your own error type, to use
+/// it with [`ThreadedHist`] and [`fill_par`].
+#[doc(alias = "Merge")]
 pub trait Mergeable: Clone + Send + Sized {
+    /// Why two values cannot be combined.
+    type Error: std::error::Error + Send + Sync + 'static;
+
     /// Combine `other` into `self`, as if `self` had also been filled with
     /// everything `other` was.
     ///
@@ -21,10 +33,31 @@ pub trait Mergeable: Clone + Send + Sized {
     ///
     /// If the two cannot be combined (different binnings), leaving `self`
     /// unchanged.
-    fn merge(&mut self, other: &Self) -> Result<()>;
+    fn merge(&mut self, other: &Self) -> std::result::Result<(), Self::Error>;
+
+    /// Fold an iterator into one value, starting from the first item: an
+    /// in-memory `hadd`. `Ok(None)` for an empty iterator.
+    ///
+    /// # Errors
+    ///
+    /// The error of the first pair that cannot be combined.
+    fn merge_all<I: IntoIterator<Item = Self>>(
+        items: I,
+    ) -> std::result::Result<Option<Self>, Self::Error> {
+        let mut it = items.into_iter();
+        let Some(mut acc) = it.next() else {
+            return Ok(None);
+        };
+        for item in it {
+            acc.merge(&item)?;
+        }
+        Ok(Some(acc))
+    }
 }
 
 impl<S: Storage, const D: usize> Mergeable for Histogram<S, D> {
+    type Error = crate::Error;
+
     fn merge(&mut self, other: &Self) -> Result<()> {
         self.add(other)
     }
@@ -93,19 +126,17 @@ impl<H: Mergeable> ThreadedHist<H> {
     }
 
     /// Combine every thread's copy into one (the template, if no thread
-    /// filled).
+    /// filled). Each copy started as a clone of the template, so the template
+    /// itself is not added again.
     ///
     /// # Errors
     ///
     /// The error of [`Mergeable::merge`] if two copies cannot be combined;
     /// copies of one template always can, including when growing category
     /// axes met different categories on different threads.
-    pub fn merge(self) -> Result<H> {
-        let mut acc = self.template;
-        for slot in self.slots {
-            acc.merge(&slot.into_inner())?;
-        }
-        Ok(acc)
+    pub fn merge(self) -> std::result::Result<H, H::Error> {
+        let copies = self.slots.into_iter().map(RefCell::into_inner);
+        Ok(H::merge_all(copies)?.unwrap_or(self.template))
     }
 }
 
@@ -246,6 +277,49 @@ mod tests {
         let mut serial = Hist::reg(10, 0.0, 10.0).weight();
         serial.fill_many(data.iter().copied());
         assert_eq!(merged, serial);
+    }
+
+    /// A type from another crate, with its own error, plugs in through
+    /// `Mergeable` alone.
+    #[derive(Clone, Debug, PartialEq)]
+    struct Counter(u64);
+
+    #[derive(Debug)]
+    struct Never;
+    impl std::fmt::Display for Never {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("never")
+        }
+    }
+    impl std::error::Error for Never {}
+
+    impl Mergeable for Counter {
+        type Error = Never;
+        fn merge(&mut self, other: &Self) -> std::result::Result<(), Never> {
+            self.0 += other.0;
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn foreign_types_use_the_accumulator() {
+        let acc = ThreadedHist::new(Counter(0));
+        std::thread::scope(|s| {
+            for _ in 0..4 {
+                let acc = &acc;
+                s.spawn(move || (0..250).for_each(|_| acc.with_local(|c| c.0 += 1)));
+            }
+        });
+        assert_eq!(acc.merge().unwrap(), Counter(1000));
+        assert_eq!(Counter::merge_all(Vec::new()).unwrap(), None);
+        assert_eq!(
+            Counter::merge_all([Counter(1), Counter(2)]).unwrap(),
+            Some(Counter(3))
+        );
+        // The template is the start of every copy, not an extra addend.
+        let acc = ThreadedHist::new(Counter(5));
+        acc.with_local(|c| c.0 += 1);
+        assert_eq!(acc.merge().unwrap(), Counter(6));
     }
 
     #[test]
