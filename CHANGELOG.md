@@ -6,6 +6,13 @@ Notable changes to oxihist, by release. The format follows
 
 ## [Unreleased]
 
+## [0.4.1]
+
+### Changed
+
+- The `plot` feature uses oxiplot 0.2.1, which places math subscripts where
+  the font asks (it read the wrong MATH constant before).
+
 ## [0.4.0]
 
 ### Changed
