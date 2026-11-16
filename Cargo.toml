@@ -1,8 +1,8 @@
 [package]
 name = "oxihist"
 version = "0.4.3"
-edition = "2021"
-rust-version = "1.95"
+edition = "2024"
+rust-version = "1.100"
 license = "MIT"
 repository = "https://github.com/oxihep/oxihist"
 documentation = "https://docs.rs/oxihist"

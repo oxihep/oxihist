@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/oxihep/oxihist/actions/workflows/ci.yml/badge.svg)](https://github.com/oxihep/oxihist/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Rust 1.95+](https://img.shields.io/badge/rust-1.95%2B-orange.svg)](https://www.rust-lang.org)
+[![Rust 1.100+](https://img.shields.io/badge/rust-1.100%2B-orange.svg)](https://www.rust-lang.org)
 
 Histograms for high-energy physics in pure Rust, modelled on
 [boost-histogram](https://github.com/scikit-hep/boost-histogram) and
