@@ -135,13 +135,17 @@ pub struct Axis {
     lookup: CategoryLookup,
 }
 
-/// Categories above which a category axis keeps a hash index.
-const LOOKUP_MIN: usize = 16;
+/// Categories above which a category axis keeps a hash index. With foldhash
+/// a lookup beats comparing strings one by one from about this many.
+const LOOKUP_MIN: usize = 4;
 
+/// The index's maps hash with foldhash: much faster than std's SipHash on
+/// short keys, and still seeded per process, so crafted categories cannot
+/// easily force collisions.
 #[derive(Debug, Clone, Default)]
 struct CategoryLookup {
-    strs: std::collections::HashMap<String, usize>,
-    ints: std::collections::HashMap<i64, usize>,
+    strs: foldhash::HashMap<String, usize>,
+    ints: foldhash::HashMap<i64, usize>,
 }
 
 /// The index is derived from the categories, so it never makes two axes differ.
@@ -167,6 +171,28 @@ impl Axis {
                 }
             }
             _ => {}
+        }
+    }
+}
+
+impl Axis {
+    /// The bin of string category `s`, through the index when it is built.
+    #[inline]
+    fn find_str(&self, categories: &[String], s: &str) -> Option<usize> {
+        if self.lookup.strs.len() == categories.len() {
+            self.lookup.strs.get(s).copied()
+        } else {
+            categories.iter().position(|c| c == s)
+        }
+    }
+
+    /// The bin of integer category `i`, through the index when it is built.
+    #[inline]
+    fn find_int(&self, categories: &[i64], i: i64) -> Option<usize> {
+        if self.lookup.ints.len() == categories.len() {
+            self.lookup.ints.get(&i).copied()
+        } else {
+            categories.iter().position(|&c| c == i)
         }
     }
 }
@@ -486,9 +512,13 @@ impl Axis {
         self.locate_general(v, axis)
     }
 
-    /// The storage position of number `x` on a regular or variable axis
-    /// (`Some(None)` for a flow bin the axis does not keep), or `None` for
-    /// any other axis kind. The fill's fast path.
+    /// The storage position of `v` (`Some(None)` for a flow bin the axis
+    /// does not keep), for the values each axis kind takes natively: a number
+    /// on a regular or variable axis, an integer (or number) on an integer
+    /// axis, a string or integer on a category axis, a boolean on a boolean
+    /// axis. `None` for anything else, including a category a growing axis
+    /// does not have yet: the general path handles those. The fill's fast
+    /// path.
     #[inline(always)]
     pub(crate) fn fast_position(&self, x: f64) -> Option<Option<usize>> {
         let (i, n) = match &self.kind {
@@ -496,14 +526,61 @@ impl Axis {
             AxisKind::Variable { edges } => (variable_index(x, edges), edges.len() - 1),
             _ => return None,
         };
+        Some(self.flow_position(i, n))
+    }
+
+    /// The fast path for integer, category and boolean axes: the storage
+    /// position of their native values, like
+    /// [`fast_position`](Axis::fast_position), and `None` for anything the
+    /// general path must handle (a new category on a growing axis, …).
+    #[inline]
+    pub(crate) fn other_position(&self, v: Value<'_>) -> Option<Option<usize>> {
+        let (i, n): (isize, usize) = match (&self.kind, v) {
+            (AxisKind::Integer { lo, hi }, Value::Int(k)) => {
+                (integer_index(k, *lo, *hi), (hi - lo) as usize)
+            }
+            (AxisKind::Integer { lo, hi }, Value::Num(x)) => {
+                let n = (hi - lo) as usize;
+                if x.is_nan() {
+                    (n as isize, n)
+                } else {
+                    (integer_index(x.floor() as i64, *lo, *hi), n)
+                }
+            }
+            (AxisKind::StrCategory { categories, growth }, Value::Str(s)) => {
+                let n = categories.len();
+                match self.find_str(categories, s) {
+                    Some(k) => (k as isize, n),
+                    None if *growth => return None,
+                    None => (n as isize, n),
+                }
+            }
+            (AxisKind::IntCategory { categories, growth }, Value::Int(k)) => {
+                let n = categories.len();
+                match self.find_int(categories, k) {
+                    Some(j) => (j as isize, n),
+                    None if *growth => return None,
+                    None => (n as isize, n),
+                }
+            }
+            (AxisKind::Boolean, Value::Bool(b)) => (isize::from(b), 2),
+            _ => return None,
+        };
+        Some(self.flow_position(i, n))
+    }
+
+    /// The storage position of bin `i` (`-1..=n`) on an axis of `n` bins,
+    /// `None` for a flow bin the axis does not keep.
+    #[inline(always)]
+    fn flow_position(&self, i: isize, n: usize) -> Option<usize> {
         let under = usize::from(self.underflow);
-        Some(if i < 0 {
+        if i < 0 {
             self.underflow.then_some(0)
         } else if i as usize >= n {
             self.overflow.then_some(n + under)
         } else {
             Some(i as usize + under)
-        })
+        }
     }
 
     /// [`locate`](Axis::locate) for every axis and value.
@@ -544,11 +621,7 @@ impl Axis {
                 let Value::Str(s) = v else {
                     return Err(mismatch("a string"));
                 };
-                let found = if self.lookup.strs.len() == categories.len() {
-                    self.lookup.strs.get(s).copied()
-                } else {
-                    categories.iter().position(|c| c == s)
-                };
+                let found = self.find_str(categories, s);
                 match found {
                     Some(i) => i as isize,
                     None if *growth => return Ok(Locate::Grow),
@@ -561,11 +634,7 @@ impl Axis {
                     Value::Num(x) if x.fract() == 0.0 && x.is_finite() => x as i64,
                     _ => return Err(mismatch("an integer")),
                 };
-                let found = if self.lookup.ints.len() == categories.len() {
-                    self.lookup.ints.get(&i).copied()
-                } else {
-                    categories.iter().position(|&c| c == i)
-                };
+                let found = self.find_int(categories, i);
                 match found {
                     Some(k) => k as isize,
                     None if *growth => return Ok(Locate::Grow),
@@ -679,6 +748,18 @@ fn regular_index(x: f64, bins: usize, lo: f64, hi: f64) -> isize {
     }
 }
 
+/// The bin (`-1..=hi - lo`) of integer `k` on an integer axis over `lo..hi`.
+#[inline(always)]
+fn integer_index(k: i64, lo: i64, hi: i64) -> isize {
+    if k < lo {
+        -1
+    } else if k >= hi {
+        (hi - lo) as isize
+    } else {
+        (k - lo) as isize
+    }
+}
+
 /// The bin (`-1..=edges.len() - 1`) of `x` on a variable axis.
 #[inline]
 fn variable_index(x: f64, edges: &[f64]) -> isize {
@@ -704,6 +785,87 @@ fn numeric(v: Value<'_>) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Wherever the fill's fast path answers, it agrees with the general path.
+    #[test]
+    fn fast_position_agrees_with_locate() {
+        let many: Vec<String> = (0..40).map(|i| format!("c{i}")).collect(); // indexed
+        let many_ints: Vec<i64> = (0..40).map(|i| i * 3).collect();
+        let axes = [
+            Axis::regular(4, -1.0, 3.0),
+            Axis::regular(4, -1.0, 3.0)
+                .with_underflow(false)
+                .with_overflow(false),
+            Axis::variable(&[0.0, 1.0, 1.5, 10.0]),
+            Axis::integer(-2, 3),
+            Axis::integer(-2, 3).with_overflow(false),
+            Axis::str_category(&["a", "bb", "c"]),
+            Axis::str_category(&["a", "bb", "c"]).with_overflow(false),
+            Axis::str_category(&["a", "bb"]).with_growth(),
+            Axis::str_category(&many),
+            Axis::int_category(&[5, -1, 7]),
+            Axis::int_category(&many_ints),
+            Axis::int_category(&[5]).with_growth(),
+            Axis::boolean(),
+        ];
+        let values = [
+            Value::Num(-5.0),
+            Value::Num(-1.0),
+            Value::Num(0.0),
+            Value::Num(1.25),
+            Value::Num(2.9999999999999996),
+            Value::Num(3.0),
+            Value::Num(9.99),
+            Value::Num(10.0),
+            Value::Num(f64::NAN),
+            Value::Num(f64::INFINITY),
+            Value::Num(f64::NEG_INFINITY),
+            Value::Int(-3),
+            Value::Int(-2),
+            Value::Int(0),
+            Value::Int(2),
+            Value::Int(3),
+            Value::Int(5),
+            Value::Int(7),
+            Value::Int(57),
+            Value::Int(200),
+            Value::Str("a"),
+            Value::Str("c"),
+            Value::Str("zz"),
+            Value::Str("c17"),
+            Value::Str(""),
+            Value::Bool(true),
+            Value::Bool(false),
+        ];
+        let mut checked = 0;
+        for axis in &axes {
+            for &v in &values {
+                // The fill's dispatch (see `Histogram::locate`).
+                let fast = match v {
+                    Value::Num(x) => axis.fast_position(x).or_else(|| axis.other_position(v)),
+                    _ => axis.other_position(v),
+                };
+                let Some(fast) = fast else {
+                    continue;
+                };
+                checked += 1;
+                match axis.locate_general(v, 0) {
+                    Ok(Locate::Index(i)) => {
+                        assert_eq!(fast, axis.position(i), "{:?} with {v:?}", axis.kind)
+                    }
+                    other => panic!(
+                        "{:?} with {v:?}: fast path {fast:?}, general path {}",
+                        axis.kind,
+                        match other {
+                            Ok(_) => "grows".to_owned(),
+                            Err(e) => e.to_string(),
+                        }
+                    ),
+                }
+            }
+        }
+        assert!(checked > 60, "only {checked} fast-path cases");
+    }
 
     fn idx<'a>(a: &Axis, v: impl Into<Value<'a>>) -> isize {
         match a.locate(v.into(), 0).unwrap() {
