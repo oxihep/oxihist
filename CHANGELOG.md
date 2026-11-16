@@ -6,6 +6,16 @@ Notable changes to oxihist, by release. The format follows
 
 ## [Unreleased]
 
+## [0.4.0]
+
+### Changed
+
+- **Breaking: the `plot` feature uses oxiplot 0.2.0.** oxiplot now reads
+  fonts with skrifa instead of the unmaintained ttf-parser
+  (RUSTSEC-2026-0192), whose advisory ignore is removed here. Plots render
+  the same; the version moves because oxiplot is a public dependency (its
+  traits are implemented for `Histogram`).
+
 ## [0.3.0]
 
 ### Changed
