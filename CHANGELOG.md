@@ -6,6 +6,21 @@ Notable changes to oxihist, by release. The format follows
 
 ## [Unreleased]
 
+## [0.4.2]
+
+### Changed
+
+- **Filling numbers into regular and variable axes is 2–3× faster**, on par
+  with oxiroot's `Hist1D` (1-D regular, `Double`: 185 → 762 M fills/s;
+  `Hist1D`: 751 M/s). The fill used to call an out-of-line `locate` that
+  handled every axis kind, return its result through memory, re-match the
+  axis kind to find the storage position, and carry the category-growth
+  allocation and the panic formatting in its stack frame. Now a small,
+  always-inlined path maps a number on a regular or variable axis straight
+  to its storage position; category axes, other value types, growth and the
+  panic stay out of line. Results are unchanged: every axis is still
+  located (and grown) before a fill is dropped into a missing flow bin.
+
 ## [0.4.1]
 
 ### Changed

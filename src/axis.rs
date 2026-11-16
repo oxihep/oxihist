@@ -350,6 +350,7 @@ impl Axis {
 
     /// The number of in-range bins.
     #[must_use]
+    #[inline]
     pub fn size(&self) -> usize {
         match &self.kind {
             AxisKind::Regular { bins, .. } => *bins,
@@ -464,7 +465,50 @@ impl Axis {
 
     /// The bin index (`-1..=size`) a value falls in. `axis` is the axis
     /// position, for the error message.
+    ///
+    /// The common case, a number on a regular or variable axis, is handled
+    /// here and inlined into the fill; every other case goes to
+    /// [`locate_general`](Axis::locate_general), out of line, so the fill
+    /// loop stays small.
+    #[inline(always)]
     pub(crate) fn locate(&self, v: Value<'_>, axis: usize) -> Result<Locate> {
+        if let Value::Num(x) = v {
+            match &self.kind {
+                AxisKind::Regular { bins, lo, hi } => {
+                    return Ok(Locate::Index(regular_index(x, *bins, *lo, *hi)));
+                }
+                AxisKind::Variable { edges } => {
+                    return Ok(Locate::Index(variable_index(x, edges)));
+                }
+                _ => {}
+            }
+        }
+        self.locate_general(v, axis)
+    }
+
+    /// The storage position of number `x` on a regular or variable axis
+    /// (`Some(None)` for a flow bin the axis does not keep), or `None` for
+    /// any other axis kind. The fill's fast path.
+    #[inline(always)]
+    pub(crate) fn fast_position(&self, x: f64) -> Option<Option<usize>> {
+        let (i, n) = match &self.kind {
+            AxisKind::Regular { bins, lo, hi } => (regular_index(x, *bins, *lo, *hi), *bins),
+            AxisKind::Variable { edges } => (variable_index(x, edges), edges.len() - 1),
+            _ => return None,
+        };
+        let under = usize::from(self.underflow);
+        Some(if i < 0 {
+            self.underflow.then_some(0)
+        } else if i as usize >= n {
+            self.overflow.then_some(n + under)
+        } else {
+            Some(i as usize + under)
+        })
+    }
+
+    /// [`locate`](Axis::locate) for every axis and value.
+    #[inline(never)]
+    fn locate_general(&self, v: Value<'_>, axis: usize) -> Result<Locate> {
         let n = self.size() as isize;
         let mismatch = |expected: &'static str| Error::ValueType {
             axis,
@@ -474,27 +518,11 @@ impl Axis {
         let idx = match &self.kind {
             AxisKind::Regular { bins, lo, hi } => {
                 let x = numeric(v).ok_or_else(|| mismatch("a number"))?;
-                // Compare against the edges themselves, not the scaled
-                // coordinate: rounding can scale a value just below `hi` to
-                // exactly `bins`, which must still be the last bin.
-                if x.is_nan() || x >= *hi {
-                    n
-                } else if x < *lo {
-                    -1
-                } else {
-                    let z = (x - lo) / (hi - lo) * *bins as f64;
-                    (z.floor() as isize).clamp(0, n - 1)
-                }
+                regular_index(x, *bins, *lo, *hi)
             }
             AxisKind::Variable { edges } => {
                 let x = numeric(v).ok_or_else(|| mismatch("a number"))?;
-                if x.is_nan() || x >= edges[edges.len() - 1] {
-                    n
-                } else if x < edges[0] {
-                    -1
-                } else {
-                    edges.partition_point(|&e| e <= x) as isize - 1
-                }
+                variable_index(x, edges)
             }
             AxisKind::Integer { lo, hi } => {
                 let i = match v {
@@ -624,12 +652,43 @@ impl Axis {
 
     /// The storage position (`0..extent`) of bin index `i` (`-1..=size`), or
     /// `None` if `i` is a flow bin the axis does not have, or out of range.
+    #[inline]
     pub(crate) fn position(&self, i: isize) -> Option<usize> {
         let n = self.size() as isize;
         if i < -1 || i > n || (i == -1 && !self.underflow) || (i == n && !self.overflow) {
             return None;
         }
         Some((i + isize::from(self.underflow)) as usize)
+    }
+}
+
+/// The bin (`-1..=bins`) of `x` on a regular axis over `[lo, hi)`.
+#[inline(always)]
+fn regular_index(x: f64, bins: usize, lo: f64, hi: f64) -> isize {
+    let n = bins as isize;
+    // Compare against the edges themselves, not the scaled coordinate:
+    // rounding can scale a value just below `hi` to exactly `bins`, which
+    // must still be the last bin.
+    if x.is_nan() || x >= hi {
+        n
+    } else if x < lo {
+        -1
+    } else {
+        let z = (x - lo) / (hi - lo) * bins as f64;
+        (z.floor() as isize).clamp(0, n - 1)
+    }
+}
+
+/// The bin (`-1..=edges.len() - 1`) of `x` on a variable axis.
+#[inline]
+fn variable_index(x: f64, edges: &[f64]) -> isize {
+    let n = edges.len() as isize - 1;
+    if x.is_nan() || x >= edges[edges.len() - 1] {
+        n
+    } else if x < edges[0] {
+        -1
+    } else {
+        edges.partition_point(|&e| e <= x) as isize - 1
     }
 }
 
