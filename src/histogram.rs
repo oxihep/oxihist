@@ -160,6 +160,7 @@ impl<S: Storage, const D: usize> Histogram<S, D> {
         })
     }
 
+    #[inline]
     fn strides(&self) -> [usize; D] {
         let mut s = [1; D];
         for i in 1..D {
@@ -169,6 +170,7 @@ impl<S: Storage, const D: usize> Histogram<S, D> {
     }
 
     /// The storage offset of bin `idx` (each `-1..=size`).
+    #[inline]
     fn offset(&self, idx: [isize; D]) -> Option<usize> {
         let strides = self.strides();
         let mut off = 0;
@@ -352,7 +354,31 @@ impl<S: Storage, const D: usize> Histogram<S, D> {
     /// Locate a fill on every axis, growing category axes as needed, and
     /// return the bin's offset (`None` when it falls in a flow bin the axis
     /// does not keep).
+    #[inline(always)]
     fn locate(&mut self, values: [Value<'_>; D]) -> Result<Option<usize>> {
+        // Fast path: numbers on regular or variable axes, which neither grow
+        // nor fail. Every axis is checked before a flow bin drops the fill,
+        // so the general path below sees exactly what it did before.
+        let strides = self.strides();
+        let mut off = 0;
+        let mut dropped = false;
+        for i in 0..D {
+            let fast = match values[i] {
+                Value::Num(x) => self.axes[i].fast_position(x),
+                _ => None,
+            };
+            match fast {
+                Some(Some(p)) => off += p * strides[i],
+                Some(None) => dropped = true,
+                None => return self.locate_general(values),
+            }
+        }
+        Ok((!dropped).then_some(off))
+    }
+
+    /// [`locate`](Histogram::locate) for every axis kind and value.
+    #[inline(never)]
+    fn locate_general(&mut self, values: [Value<'_>; D]) -> Result<Option<usize>> {
         let mut idx = [0isize; D];
         for i in 0..D {
             idx[i] = match self.axes[i].locate(values[i], i)? {
@@ -370,6 +396,8 @@ impl<S: Storage, const D: usize> Histogram<S, D> {
     /// bins). Spare capacity is used when there is some; otherwise the axis's
     /// capacity doubles and every bin moves once, so growing to `n` categories
     /// costs `O(n)` moves per bin in all, not `O(n)` per category.
+    #[cold]
+    #[inline(never)]
     fn grow(&mut self, i: usize, v: Value<'_>) {
         let new_size = self.axes[i].size() + 1;
         if new_size > self.cap[i] {
@@ -397,6 +425,7 @@ impl<S: Storage, const D: usize> Histogram<S, D> {
     }
 
     /// Apply `f` to the bin `values` fall in.
+    #[inline(always)]
     fn apply(&mut self, values: [Value<'_>; D], f: impl FnOnce(&mut S::Bin)) -> Result<()> {
         if let Some(o) = self.locate(values)? {
             f(&mut self.bins[o]);
@@ -493,6 +522,7 @@ impl<S: CountStorage> Histogram<S, 1> {
     ///
     /// If `x` does not fit the axis (a string on a numeric axis, …); see
     /// [`try_fill`](Histogram::try_fill).
+    #[inline(always)]
     pub fn fill<'a>(&mut self, x: impl Into<Value<'a>>) {
         self.fill_weight(x, 1.0);
     }
@@ -502,16 +532,20 @@ impl<S: CountStorage> Histogram<S, 1> {
     /// # Panics
     ///
     /// If `x` does not fit the axis.
+    #[inline(always)]
     pub fn fill_weight<'a>(&mut self, x: impl Into<Value<'a>>, w: f64) {
-        self.try_fill_weight(x, w).unwrap_or_else(|e| panic!("{e}"));
+        self.try_fill_weight(x, w)
+            .unwrap_or_else(|e| fill_failed(e));
     }
 
     /// Fill `x` with weight 1, or report why it does not fit the axis.
+    #[inline(always)]
     pub fn try_fill<'a>(&mut self, x: impl Into<Value<'a>>) -> Result<()> {
         self.try_fill_weight(x, 1.0)
     }
 
     /// Fill `x` with weight `w`, or report why it does not fit the axis.
+    #[inline(always)]
     pub fn try_fill_weight<'a>(&mut self, x: impl Into<Value<'a>>, w: f64) -> Result<()> {
         self.apply([x.into()], |b| S::add(b, w))
     }
@@ -534,6 +568,7 @@ impl<S: CountStorage> Histogram<S, 2> {
     /// # Panics
     ///
     /// If a value does not fit its axis; see [`try_fill`](Histogram::try_fill).
+    #[inline(always)]
     pub fn fill<'a>(&mut self, x: impl Into<Value<'a>>, y: impl Into<Value<'a>>) {
         self.fill_weight(x, y, 1.0);
     }
@@ -543,17 +578,20 @@ impl<S: CountStorage> Histogram<S, 2> {
     /// # Panics
     ///
     /// If a value does not fit its axis.
+    #[inline(always)]
     pub fn fill_weight<'a>(&mut self, x: impl Into<Value<'a>>, y: impl Into<Value<'a>>, w: f64) {
         self.try_fill_weight(x, y, w)
-            .unwrap_or_else(|e| panic!("{e}"));
+            .unwrap_or_else(|e| fill_failed(e));
     }
 
     /// Fill `(x, y)` with weight 1, or report why a value does not fit.
+    #[inline(always)]
     pub fn try_fill<'a>(&mut self, x: impl Into<Value<'a>>, y: impl Into<Value<'a>>) -> Result<()> {
         self.try_fill_weight(x, y, 1.0)
     }
 
     /// Fill `(x, y)` with weight `w`, or report why a value does not fit.
+    #[inline(always)]
     pub fn try_fill_weight<'a>(
         &mut self,
         x: impl Into<Value<'a>>,
@@ -570,6 +608,7 @@ impl<S: CountStorage> Histogram<S, 3> {
     /// # Panics
     ///
     /// If a value does not fit its axis; see [`try_fill`](Histogram::try_fill).
+    #[inline(always)]
     pub fn fill<'a>(
         &mut self,
         x: impl Into<Value<'a>>,
@@ -584,6 +623,7 @@ impl<S: CountStorage> Histogram<S, 3> {
     /// # Panics
     ///
     /// If a value does not fit its axis.
+    #[inline(always)]
     pub fn fill_weight<'a>(
         &mut self,
         x: impl Into<Value<'a>>,
@@ -592,10 +632,11 @@ impl<S: CountStorage> Histogram<S, 3> {
         w: f64,
     ) {
         self.try_fill_weight(x, y, z, w)
-            .unwrap_or_else(|e| panic!("{e}"));
+            .unwrap_or_else(|e| fill_failed(e));
     }
 
     /// Fill `(x, y, z)` with weight 1, or report why a value does not fit.
+    #[inline(always)]
     pub fn try_fill<'a>(
         &mut self,
         x: impl Into<Value<'a>>,
@@ -606,6 +647,7 @@ impl<S: CountStorage> Histogram<S, 3> {
     }
 
     /// Fill `(x, y, z)` with weight `w`, or report why a value does not fit.
+    #[inline(always)]
     pub fn try_fill_weight<'a>(
         &mut self,
         x: impl Into<Value<'a>>,
@@ -635,7 +677,7 @@ impl<S: MeanStorage> Histogram<S, 1> {
     /// If `x` does not fit the axis.
     pub fn fill_sample_weight<'a>(&mut self, x: impl Into<Value<'a>>, s: f64, w: f64) {
         self.try_fill_sample_weight(x, s, w)
-            .unwrap_or_else(|e| panic!("{e}"));
+            .unwrap_or_else(|e| fill_failed(e));
     }
 
     /// Add the sample `s`, or report why `x` does not fit the axis.
@@ -677,7 +719,7 @@ impl<S: MeanStorage> Histogram<S, 2> {
         w: f64,
     ) {
         self.try_fill_sample_weight(x, y, s, w)
-            .unwrap_or_else(|e| panic!("{e}"));
+            .unwrap_or_else(|e| fill_failed(e));
     }
 
     /// Add the sample `s` with weight `w`, or report why a value does not fit.
@@ -722,7 +764,7 @@ impl<S: MeanStorage> Histogram<S, 3> {
         w: f64,
     ) {
         self.try_fill_sample_weight(x, y, z, s, w)
-            .unwrap_or_else(|e| panic!("{e}"));
+            .unwrap_or_else(|e| fill_failed(e));
     }
 
     /// Add the sample `s` with weight `w`, or report why a value does not fit.
@@ -753,6 +795,14 @@ impl<S: Storage> Histogram<S, 2> {
     }
 }
 
+/// The panic of a `fill` whose value does not fit an axis, kept out of the
+/// fill so the fast path stays small.
+#[cold]
+#[inline(never)]
+fn fill_failed(e: Error) -> ! {
+    panic!("{e}")
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{Axis, Double, Hist, Histogram, Int64, Mean, Weight};
@@ -776,6 +826,41 @@ mod tests {
         assert_eq!(h.value([2]), Some(1.0));
         assert_eq!(h.value([-1]), None);
         assert_eq!(h.sum(true), 1);
+    }
+
+    #[test]
+    fn fast_path_matches_the_general_path() {
+        // A dropped numeric value on one axis still grows a category axis
+        // after it, as when every axis went through the general path.
+        let mut h = Histogram::<Double, 2>::new([
+            Axis::regular(2, 0.0, 2.0).with_underflow(false),
+            Axis::str_category(&["a"]).with_growth(),
+        ]);
+        h.fill(-1.0, "b");
+        assert_eq!(h.axis(1).size(), 2);
+        assert_eq!(h.sum(true), 0.0);
+
+        // Numbers on a regular axis with no flow bins drop out of range;
+        // `no_flow` applies to the first axis only, so the second keeps its.
+        let mut h = Hist::reg(2, 0.0, 2.0).no_flow().reg(2, 0.0, 2.0).double();
+        h.fill(9.0, 0.5); // dropped: x has no overflow bin
+        h.fill(0.5, 9.0); // y overflow
+        h.fill(0.5, 1.5);
+        assert_eq!(h.sum(true), 2.0);
+        assert_eq!(h.value([0, 2]), Some(1.0));
+        assert_eq!(h.value([0, 1]), Some(1.0));
+
+        // Variable axis: edges and flow bins, like the general path.
+        let mut h = Hist::var(&[0.0, 1.0, 5.0]).double();
+        for x in [-1.0, 0.0, 1.0, 4.999, 5.0, f64::NAN] {
+            h.fill(x);
+        }
+        assert_eq!(h.values(true), vec![1.0, 1.0, 2.0, 2.0]);
+
+        // A value of the wrong type still fails instead of taking a bin.
+        let mut h = Hist::reg(2, 0.0, 2.0).double();
+        assert!(h.try_fill("x").is_err());
+        assert_eq!(h.sum(true), 0.0);
     }
 
     #[test]
