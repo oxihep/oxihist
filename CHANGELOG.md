@@ -6,6 +6,24 @@ Notable changes to oxihist, by release. The format follows
 
 ## [Unreleased]
 
+## [0.3.0]
+
+### Changed
+
+- **Breaking: `Mergeable` has an associated `Error` type.** `ThreadedHist`
+  and `fill_par` now work for any type that implements it, with that type's
+  own error, so oxiroot's ROOT histograms use this accumulator instead of a
+  copy of it. `ThreadedHist::merge` returns `Result<H, H::Error>`; for
+  oxihist histograms that is still `oxihist::Error`.
+- `ThreadedHist::merge` folds the per-thread copies only. Each copy starts as
+  a clone of the template, so a non-empty template is no longer counted once
+  more than the copies that hold it.
+
+### Added
+
+- `Mergeable::merge_all` folds an iterator into one value (`Ok(None)` when it
+  is empty), an in-memory `hadd`.
+
 ## [0.2.0]
 
 ### Changed
