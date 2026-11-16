@@ -16,7 +16,7 @@ and [oxifit](https://github.com/oxihep/oxifit) fits them (the `fit` feature).
 
 ```toml
 [dependencies]
-oxihist = { git = "https://github.com/oxihep/oxihist", tag = "v0.1.0" }
+oxihist = { git = "https://github.com/oxihep/oxihist", tag = "v0.4.3" }
 ```
 
 ```rust
@@ -45,7 +45,8 @@ let mass = m.project([0]).unwrap();       // sum over the channels
 | **Histograms** | `Histogram<S, D>` for 1, 2 and 3 dimensions: `fill`/`fill_weight`, `fill_sample` for profiles, bin access with index `-1` for underflow and `size` for overflow |
 | **Operations** | `add`, `scale`, `project`, `rebin`, `sum`, `reset`; 1-D `mean`, `std`, `quantiles`, `integral`, `cumulative` |
 | **Sampling** | a seedable `Random`, `sample`, `fill_random`, `fill_random_fn` |
-| **Threads** | `ThreadedHist` (one copy per thread, merged at the end) and `fill_par` with the `rayon` feature |
+| **Threads** | `ThreadedHist` (one copy per thread, found without a shared lock, merged at the end) and `fill_par` with the `rayon` feature; both work for any `Mergeable` type, so oxiroot uses them for ROOT histograms too |
+| **Speed** | a number on a regular axis fills at ~770 M/s, as fast as oxiroot's `Hist1D`; integers, known categories (a foldhash index) and booleans skip the general growing/converting path |
 
 Bins are numbered boost-histogram's way: `0..size` in range, `-1` for the
 underflow and `size` for the overflow bin.
