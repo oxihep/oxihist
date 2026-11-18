@@ -29,6 +29,9 @@ use crate::storage::{CountStorage, MeanStorage, Storage};
         deserialize = "S::Bin: serde::Deserialize<'de>"
     ))
 )]
+// Deserialising checks what the constructors guarantee: D axes, and a storage
+// laid out for them.
+#[cfg_attr(feature = "serde", serde(try_from = "HistogramRepr<S::Bin>"))]
 pub struct Histogram<S: Storage, const D: usize> {
     axes: Vec<Axis>,
     /// Storage: `cap[i]` slots along axis `i`, the first axis varying fastest.
@@ -43,6 +46,64 @@ pub struct Histogram<S: Storage, const D: usize> {
     pub title: String,
     #[cfg_attr(feature = "serde", serde(skip))]
     storage: PhantomData<S>,
+}
+
+/// The serialised form of a [`Histogram`]: the same fields, checked on the
+/// way in.
+#[cfg(feature = "serde")]
+#[derive(serde::Deserialize)]
+struct HistogramRepr<B> {
+    axes: Vec<Axis>,
+    bins: Vec<B>,
+    cap: Vec<usize>,
+    name: String,
+    title: String,
+}
+
+#[cfg(feature = "serde")]
+impl<S: Storage, const D: usize> TryFrom<HistogramRepr<S::Bin>> for Histogram<S, D> {
+    type Error = crate::Error;
+
+    fn try_from(r: HistogramRepr<S::Bin>) -> crate::Result<Self> {
+        let bad = |m: String| Err(crate::Error::InvalidData(m));
+        if r.axes.len() != D || r.cap.len() != D {
+            return bad(format!(
+                "a {D}-D histogram needs {D} axes and storage sizes, got {} and {}",
+                r.axes.len(),
+                r.cap.len()
+            ));
+        }
+        // Each axis needs at least its extent in storage; a growing axis may
+        // keep spare slots beyond it.
+        if let Some((i, (a, &c))) = r
+            .axes
+            .iter()
+            .zip(&r.cap)
+            .enumerate()
+            .find(|(_, (a, c))| **c < a.extent())
+        {
+            return bad(format!(
+                "axis {i} has {} bins with flow but storage for {c}",
+                a.extent()
+            ));
+        }
+        let cells = r.cap.iter().try_fold(1usize, |n, &c| n.checked_mul(c));
+        if cells != Some(r.bins.len()) {
+            return bad(format!(
+                "storage sized {:?} holds {} bins",
+                r.cap,
+                r.bins.len()
+            ));
+        }
+        Ok(Histogram {
+            axes: r.axes,
+            bins: r.bins,
+            cap: r.cap,
+            name: r.name,
+            title: r.title,
+            storage: PhantomData,
+        })
+    }
 }
 
 /// Two histograms are equal when their axes, name, title and every bin are;

@@ -6,6 +6,25 @@ Notable changes to oxihist, by release. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `Axis::try_integer`, and `Error::InvalidData` for deserialised data that
+  breaks an invariant.
+
+### Fixed
+
+- **Deserialising skipped the constructors' checks.** With the `serde`
+  feature, `Axis` and `Histogram` derived `Deserialize` directly, so a
+  hand-edited or hostile file could build an axis with descending edges or
+  no bins, or a histogram whose storage does not match its axes (which then
+  panicked or misindexed on fill). Loading now checks exactly what the
+  constructors do, and the storage size against the axes, and returns an
+  error. The serialised format is unchanged. A loaded category axis also
+  rebuilds its lookup index at once rather than scanning until it grows.
+- **`Axis::integer` over a range wider than an index.** `hi - lo` was not
+  checked, so `Axis::integer(i64::MIN, i64::MAX)` overflowed. It now panics
+  with a clear message (`try_integer` returns an error).
+
 ## [0.5.1]
 
 ### Changed
