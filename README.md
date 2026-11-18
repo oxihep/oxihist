@@ -61,6 +61,18 @@ underflow and `size` for the overflow bin.
 | `plot` | oxiplot's data traits: `Axes::hist(&h)`, `Axes::profile(&p)`, `Axes::hist2d(&h2)` |
 | `fit` | oxifit's `FitData`: `h.fit(&model)` on a 1-D histogram |
 
+## Examples
+
+Physics examples on toy events (`cargo run --example <name>`):
+
+| Example | Shows |
+| --- | --- |
+| [`dimuon_mass`](examples/dimuon_mass.rs) | Z → μμ invariant mass from muon (pT, η, φ), acceptance cuts, NLO-style negative weights and the effective number of events |
+| [`cutflow`](examples/cutflow.rs) | A weighted cutflow per channel, with string-category axes for the selection step and a growing channel axis |
+| [`jet_response`](examples/jet_response.rs) | Jet energy response and resolution versus pT with a profile (`Mean` storage), and the energy-scale correction |
+| [`occupancy`](examples/occupancy.rs) | A detector η–φ occupancy map: finding dead and hot cells, projecting and rebinning |
+| [`threaded_fill`](examples/threaded_fill.rs) | Filling one histogram from many threads with `ThreadedHist`, identical to a serial fill |
+
 ## The oxihep family
 
 Rust crates for high-energy physics, split the way Python's
