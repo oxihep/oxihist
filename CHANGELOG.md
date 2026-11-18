@@ -6,6 +6,13 @@ Notable changes to oxihist, by release. The format follows
 
 ## [Unreleased]
 
+## [0.5.1]
+
+### Changed
+
+- The `plot` feature uses oxiplot 0.3.1, whose histograms no longer drop
+  their y axis below zero for error bars reaching below an empty bin.
+
 ## [0.5.0]
 
 ### Changed
