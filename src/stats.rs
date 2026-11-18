@@ -46,11 +46,48 @@ impl Random {
     /// Returns `None`, without drawing, when `edges.len() != weights.len() + 1`
     /// or the weights do not sum to a positive, finite total.
     pub fn sample_binned(&mut self, weights: &[f64], edges: &[f64]) -> Option<f64> {
+        Some(BinnedSampler::new(weights, edges)?.sample(self))
+    }
+}
+
+/// A binned density prepared for many draws: the cumulative is built once,
+/// then each [`sample`](BinnedSampler::sample) costs one uniform draw and a
+/// binary search (what `FillRandom` does for each of its draws).
+///
+/// ```
+/// use oxihist::{BinnedSampler, Random};
+/// let sampler = BinnedSampler::new(&[1.0, 3.0], &[0.0, 1.0, 2.0]).unwrap();
+/// let mut rng = Random::seed(7);
+/// let x = sampler.sample(&mut rng);
+/// assert!((0.0..2.0).contains(&x));
+/// ```
+#[derive(Debug, Clone, PartialEq)]
+pub struct BinnedSampler {
+    cdf: Vec<f64>,
+    edges: Vec<f64>,
+}
+
+impl BinnedSampler {
+    /// A sampler for the density whose bin `k` spans `[edges[k], edges[k + 1])`
+    /// with weight `weights[k]`. `None` when `edges.len() != weights.len() + 1`
+    /// or the weights do not sum to a positive, finite total.
+    #[must_use]
+    pub fn new(weights: &[f64], edges: &[f64]) -> Option<BinnedSampler> {
         if edges.len() != weights.len() + 1 {
             return None;
         }
-        let cdf = build_cdf(weights)?;
-        Some(sample_cdf(&cdf, edges, self.uniform()))
+        Some(BinnedSampler {
+            cdf: build_cdf(weights)?,
+            edges: edges.to_vec(),
+        })
+    }
+
+    /// Draw one value: a bin picked with probability proportional to its
+    /// weight, and a position within it by linear interpolation of the
+    /// cumulative (ROOT's `GetRandom`). Makes exactly one
+    /// [`uniform`](Random::uniform) draw.
+    pub fn sample(&self, rng: &mut Random) -> f64 {
+        sample_cdf(&self.cdf, &self.edges, rng.uniform())
     }
 }
 
@@ -207,12 +244,12 @@ impl<S: CountStorage> Histogram<S, 1> {
         n: usize,
         rng: &mut Random,
     ) {
-        let edges = source.axis(0).plot_edges();
-        let Some(cdf) = build_cdf(&source.values(false)) else {
+        let Some(sampler) = BinnedSampler::new(&source.values(false), &source.axis(0).plot_edges())
+        else {
             return;
         };
         for _ in 0..n {
-            self.fill(sample_cdf(&cdf, &edges, rng.uniform()));
+            self.fill(sampler.sample(rng));
         }
     }
 
@@ -226,11 +263,11 @@ impl<S: CountStorage> Histogram<S, 1> {
             return;
         };
         let weights: Vec<f64> = axis.centers().into_iter().map(|c| f(c).max(0.0)).collect();
-        let Some(cdf) = build_cdf(&weights) else {
+        let Some(sampler) = BinnedSampler::new(&weights, &edges) else {
             return;
         };
         for _ in 0..n {
-            self.fill(sample_cdf(&cdf, &edges, rng.uniform()));
+            self.fill(sampler.sample(rng));
         }
     }
 }

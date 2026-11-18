@@ -46,7 +46,7 @@ pub use axis::{Axis, AxisKind, Value};
 pub use builder::{Build1, Build2, Build3, Hist};
 pub use error::{Error, Result};
 pub use histogram::Histogram;
-pub use stats::Random;
+pub use stats::{BinnedSampler, Random};
 pub use storage::{
     CountStorage, Double, Int64, Mean, MeanBin, MeanStorage, Storage, Weight, WeightedMean,
     WeightedMeanBin, WeightedSum,

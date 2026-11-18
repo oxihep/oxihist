@@ -6,6 +6,20 @@ Notable changes to oxihist, by release. The format follows
 
 ## [Unreleased]
 
+## [0.6.2]
+
+### Added
+
+- `BinnedSampler`: a binned density prepared once and sampled many times
+  (one uniform draw and a binary search per value), what `fill_random` and
+  `Random::sample_binned` now use. Downstream code (oxiroot's `Hist1D`)
+  shares it instead of keeping its own copy. The draws are unchanged.
+
+### Changed
+
+- The `plot` feature uses oxiplot 0.4.2 (its `Error::Io` reports its cause
+  through `source()`).
+
 ## [0.6.1]
 
 ### Changed
