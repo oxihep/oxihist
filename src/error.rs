@@ -21,6 +21,9 @@ pub enum Error {
     /// An axis was asked for something it cannot do (rebin a category axis, a
     /// rebin factor that does not divide the bins, an axis index out of range).
     InvalidAxis(String),
+    /// Deserialised data breaks an invariant the constructors keep (a storage
+    /// whose size does not match its axes, the wrong number of axes, …).
+    InvalidData(String),
 }
 
 impl fmt::Display for Error {
@@ -33,6 +36,7 @@ impl fmt::Display for Error {
             } => write!(f, "axis {axis} takes {expected}, got {found}"),
             Error::BinningMismatch(m) => write!(f, "binning mismatch: {m}"),
             Error::InvalidAxis(m) => write!(f, "invalid axis operation: {m}"),
+            Error::InvalidData(m) => write!(f, "invalid histogram data: {m}"),
         }
     }
 }

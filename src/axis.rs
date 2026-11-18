@@ -117,8 +117,13 @@ pub enum AxisKind {
 
 /// One histogram axis: a binning plus a name, a label and whether it keeps
 /// under- and overflow bins.
+///
+/// With the `serde` feature, a deserialised axis goes through the same checks
+/// as the constructors (finite ascending edges, `lo < hi`, …), so malformed
+/// input is an error rather than an axis that misbehaves later.
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(try_from = "AxisRepr"))]
 pub struct Axis {
     kind: AxisKind,
     /// A short identifier, e.g. `"pt"`.
@@ -130,9 +135,59 @@ pub struct Axis {
     /// A hash index of the categories, kept once a category axis has more than
     /// a few: filling looks a category up on every call, and a linear scan of
     /// thousands of strings dominated the fill. Derived data, so it is not
-    /// compared or serialized (an axis read back scans until it next grows).
+    /// compared or serialized; deserialising rebuilds it.
     #[cfg_attr(feature = "serde", serde(skip))]
     lookup: CategoryLookup,
+}
+
+/// Whether `lo..hi` is a valid integer axis.
+fn check_integer(lo: i64, hi: i64) -> Result<()> {
+    // The bin count, and the count plus the two flow bins, must fit an index.
+    let fits = hi
+        .checked_sub(lo)
+        .is_some_and(|n| n > 0 && n <= isize::MAX as i64 - 2);
+    if fits {
+        Ok(())
+    } else {
+        Err(Error::InvalidAxis(format!(
+            "an integer axis needs lo < hi with hi - lo countable, got {lo}..{hi}"
+        )))
+    }
+}
+
+/// The serialised form of an [`Axis`]: the same fields, checked on the way in.
+#[cfg(feature = "serde")]
+#[derive(serde::Deserialize)]
+struct AxisRepr {
+    kind: AxisKind,
+    name: String,
+    label: String,
+    underflow: bool,
+    overflow: bool,
+}
+
+#[cfg(feature = "serde")]
+impl TryFrom<AxisRepr> for Axis {
+    type Error = Error;
+
+    /// Accept exactly what the constructors accept.
+    fn try_from(r: AxisRepr) -> Result<Axis> {
+        match &r.kind {
+            AxisKind::Regular { bins, lo, hi } => {
+                Axis::try_regular(*bins, *lo, *hi)?;
+            }
+            AxisKind::Variable { edges } => {
+                Axis::try_variable(edges)?;
+            }
+            AxisKind::Integer { lo, hi } => check_integer(*lo, *hi)?,
+            AxisKind::StrCategory { .. } | AxisKind::IntCategory { .. } | AxisKind::Boolean => {}
+        }
+        // `with_kind` rebuilds the category index, which is not serialised.
+        let mut axis = Axis::with_kind(r.kind, r.underflow, r.overflow);
+        axis.name = r.name;
+        axis.label = r.label;
+        Ok(axis)
+    }
 }
 
 /// Categories above which a category axis keeps a hash index. With foldhash
@@ -280,11 +335,20 @@ impl Axis {
     ///
     /// # Panics
     ///
-    /// If `lo >= hi`.
+    /// If `lo >= hi`, or the range has more integers than an index can count;
+    /// see [`try_integer`](Axis::try_integer).
     #[must_use]
     pub fn integer(lo: i64, hi: i64) -> Axis {
-        assert!(lo < hi, "an integer axis needs lo < hi, got {lo}..{hi}");
-        Self::with_kind(AxisKind::Integer { lo, hi }, true, true)
+        Self::try_integer(lo, hi).unwrap_or_else(|e| panic!("{e}"))
+    }
+
+    /// Like [`integer`](Axis::integer), returning an error instead of
+    /// panicking. `hi - lo` must not overflow and must leave room for the two
+    /// flow bins in an index (so `i64::MIN..i64::MAX` is refused). Each bin is
+    /// stored, so a range is in practice bounded by memory long before that.
+    pub fn try_integer(lo: i64, hi: i64) -> Result<Axis> {
+        check_integer(lo, hi)?;
+        Ok(Self::with_kind(AxisKind::Integer { lo, hi }, true, true))
     }
 
     /// One bin per string category, plus an overflow bin for any other string.
@@ -918,5 +982,10 @@ mod tests {
         assert!(Axis::try_regular(0, 0.0, 1.0).is_err());
         assert!(Axis::try_regular(3, 1.0, 1.0).is_err());
         assert!(Axis::try_variable(&[0.0, 0.0]).is_err());
+        assert!(Axis::try_integer(3, 3).is_err());
+        assert!(Axis::try_integer(i64::MIN, i64::MAX).is_err());
+        assert!(Axis::try_integer(i64::MIN, 0).is_err()); // 2^63 integers
+        assert!(Axis::try_integer(i64::MIN, -3).is_ok()); // the widest allowed
+        assert_eq!(Axis::try_integer(-2, 2).unwrap().size(), 4);
     }
 }
