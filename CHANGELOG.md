@@ -6,8 +6,15 @@ Notable changes to oxihist, by release. The format follows
 
 ## [Unreleased]
 
+## [0.5.0]
+
 ### Changed
 
+- **Breaking: the `plot` feature uses oxiplot 0.3.0.** oxiplot 0.3 adds log
+  axes and legend placement, lays out multi-panel figures around their
+  labels, and fixes axis limits, non-finite data and the PDF page size (see
+  its changelog). The version moves because oxiplot is a public dependency
+  (its traits are implemented for `Histogram`).
 - **Rust 1.100 and edition 2024.** The minimum supported Rust version
   (`rust-version`) moves from 1.95 to 1.100, the current stable release that
   CI already builds with, and the crates move to the 2024 edition (migrated
