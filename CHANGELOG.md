@@ -6,6 +6,14 @@ Notable changes to oxihist, by release. The format follows
 
 ## [Unreleased]
 
+## [0.6.1]
+
+### Changed
+
+- The `fit` feature uses oxifit 0.1.2, the version oxiplot 0.4.0 uses, so a
+  build with both resolves one oxifit (oxifit 0.1.2's Nelder–Mead fallback
+  is valid only when it converged).
+
 ## [0.6.0]
 
 ### Changed
