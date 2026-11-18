@@ -6,6 +6,18 @@ Notable changes to oxihist, by release. The format follows
 
 ## [Unreleased]
 
+## [0.6.3]
+
+### Changed
+
+- The `plot` feature uses oxiplot 0.4.3 (its `Loc::Best` legend placement
+  keeps off filled histograms).
+
+### Added
+
+- Examples: `dimuon_mass`, `cutflow`, `jet_response`, `occupancy` and
+  `threaded_fill` (`cargo run --example …`), listed in the README.
+
 ## [0.6.2]
 
 ### Added
