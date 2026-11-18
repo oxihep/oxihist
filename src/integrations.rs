@@ -3,7 +3,8 @@
 /// [oxiplot](https://github.com/oxihep/oxiplot) draws 1-D and 2-D histograms
 /// (the `plot` feature): a profile ([`Mean`](crate::Mean) storage) draws its
 /// per-bin means with their standard errors, a categorical axis one unit per
-/// category.
+/// category, labelled with the category (a 1-D histogram's string, integer
+/// or boolean categories name its bins on the plot).
 #[cfg(feature = "plot")]
 mod plot {
     use oxiplot::{Hist1dData, Hist2dData};
@@ -19,6 +20,11 @@ mod plot {
         }
         fn error(&self, i: usize) -> f64 {
             self.variance([i as isize]).unwrap_or(0.0).max(0.0).sqrt()
+        }
+        fn x_labels(&self) -> Option<Vec<String>> {
+            let axis = self.axis(0);
+            axis.is_categorical()
+                .then(|| (0..axis.size()).filter_map(|i| axis.bin_label(i)).collect())
         }
     }
 
@@ -55,6 +61,28 @@ mod plot {
             for svg in [ax.to_svg_string(), ax2.to_svg_string()] {
                 assert!(svg.starts_with("<svg") && svg.ends_with("</svg>"));
             }
+        }
+
+        #[test]
+        fn category_axes_name_their_bins() {
+            use oxiplot::Hist1dData;
+            let mut h = Hist::str_cat(&["ee", "μμ"]).growth().double();
+            h.fill("eμ");
+            assert_eq!(
+                h.x_labels(),
+                Some(vec!["ee".into(), "μμ".into(), "eμ".into()])
+            );
+            let b = Hist::boolean().double();
+            assert_eq!(b.x_labels(), Some(vec!["false".into(), "true".into()]));
+            let i = Hist::int_cat(&[11, 13]).double();
+            assert_eq!(i.x_labels(), Some(vec!["11".into(), "13".into()]));
+            // Numeric axes, integer ones included, keep numeric ticks.
+            assert_eq!(Hist::reg(4, 0.0, 1.0).double().x_labels(), None);
+            assert_eq!(Hist::int(0, 5).double().x_labels(), None);
+            // And the plot draws.
+            let mut ax = Axes::new();
+            ax.hist(&h);
+            assert!(ax.to_svg_string().ends_with("</svg>"));
         }
     }
 }

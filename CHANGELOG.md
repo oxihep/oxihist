@@ -6,8 +6,20 @@ Notable changes to oxihist, by release. The format follows
 
 ## [Unreleased]
 
+## [0.6.0]
+
+### Changed
+
+- **Breaking: the `plot` feature uses oxiplot 0.4.0** (oxiplot is a public
+  dependency: its traits are implemented for `Histogram`). Its plots gain
+  stacks, labelled category axes, SVGs sized in points and large heatmaps
+  as one image (see its changelog).
+
 ### Added
 
+- A 1-D histogram over a string, integer-category or boolean axis names its
+  bins in plots (`Hist1dData::x_labels`): each bin is labelled with its
+  category instead of a numeric tick.
 - `Axis::try_integer`, and `Error::InvalidData` for deserialised data that
   breaks an invariant.
 
