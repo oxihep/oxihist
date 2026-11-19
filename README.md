@@ -17,7 +17,7 @@ and [oxifit](https://github.com/oxihep/oxifit) fits them (the `fit` feature).
 
 ```toml
 [dependencies]
-oxihist = { git = "https://github.com/oxihep/oxihist", tag = "v0.9.1" }
+oxihist = { git = "https://github.com/oxihep/oxihist", tag = "v0.10.0" }
 ```
 
 ```rust
@@ -59,7 +59,7 @@ underflow and `size` for the overflow bin.
 | `rayon` | `fill_par`, a parallel fill from a slice |
 | `serde` | `Serialize`/`Deserialize` for histograms, axes and bins |
 | `plot` | oxiplot's data traits: `Axes::hist(&h)`, `Axes::profile(&p)`, `Axes::hist2d(&h2)` |
-| `fit` | oxifit's `FitData`: `h.fit(&model)` on a 1-D histogram |
+| `fit` | oxifit's `FitData`/`FitDataNd`: `h.fit(&model)` on a 1-, 2- or 3-D histogram |
 
 ## Examples
 

@@ -87,12 +87,14 @@ mod plot {
     }
 }
 
-/// [oxifit](https://github.com/oxihep/oxifit) fits 1-D histograms (the `fit`
-/// feature): each in-range bin is a point `(center, value, √variance)`. An
-/// empty count bin has σ = 0, so a Neyman χ² fit skips it, as ROOT does.
+/// [oxifit](https://github.com/oxihep/oxifit) fits 1-, 2- and 3-D histograms
+/// (the `fit` feature): each in-range bin is a point at its center with the
+/// bin's value and `√variance`. An empty count bin has σ = 0, so a Neyman χ²
+/// fit skips it, as ROOT does. A 2-D or 3-D histogram is fitted with a model
+/// of as many variables (`Model::new2`, `Model::product`, …).
 #[cfg(feature = "fit")]
 mod fit {
-    use oxifit::{FitData, Point};
+    use oxifit::{FitData, FitDataNd, Point, PointNd};
 
     use crate::{Histogram, Storage};
 
@@ -105,6 +107,56 @@ mod fit {
                     Point::new(centers[i], S::value(b), S::variance(b).max(0.0).sqrt())
                 })
                 .collect()
+        }
+    }
+
+    impl<S: Storage> FitDataNd for Histogram<S, 2> {
+        fn dim(&self) -> usize {
+            2
+        }
+        fn points_nd(&self) -> Vec<PointNd> {
+            let (cx, cy) = (self.axis(0).centers(), self.axis(1).centers());
+            let mut out = Vec::with_capacity(cx.len() * cy.len());
+            for (i, &x) in cx.iter().enumerate() {
+                for (j, &y) in cy.iter().enumerate() {
+                    let b = self.bin([i as isize, j as isize]).expect("in range");
+                    out.push(PointNd::new(
+                        [x, y, 0.0],
+                        S::value(b),
+                        S::variance(b).max(0.0).sqrt(),
+                    ));
+                }
+            }
+            out
+        }
+    }
+
+    impl<S: Storage> FitDataNd for Histogram<S, 3> {
+        fn dim(&self) -> usize {
+            3
+        }
+        fn points_nd(&self) -> Vec<PointNd> {
+            let c = [
+                self.axis(0).centers(),
+                self.axis(1).centers(),
+                self.axis(2).centers(),
+            ];
+            let mut out = Vec::with_capacity(c[0].len() * c[1].len() * c[2].len());
+            for (i, &x) in c[0].iter().enumerate() {
+                for (j, &y) in c[1].iter().enumerate() {
+                    for (k, &z) in c[2].iter().enumerate() {
+                        let b = self
+                            .bin([i as isize, j as isize, k as isize])
+                            .expect("in range");
+                        out.push(PointNd::new(
+                            [x, y, z],
+                            S::value(b),
+                            S::variance(b).max(0.0).sqrt(),
+                        ));
+                    }
+                }
+            }
+            out
         }
     }
 
@@ -124,6 +176,43 @@ mod fit {
             let r = h.fit(&Model::polynomial("line", 1).with_params(vec![0.0, 1.0]));
             assert!(r.valid);
             assert!((r.params[1] - 2.0).abs() < 1e-6, "{:?}", r.params);
+        }
+
+        #[test]
+        fn a_2d_and_a_3d_histogram_fit() {
+            // A plane a + b·x + c·y filled as weights at the bin centers.
+            let mut h = Hist::reg(8, 0.0, 8.0).reg(6, 0.0, 6.0).weight();
+            for i in 0..8 {
+                for j in 0..6 {
+                    let (x, y) = (f64::from(i) + 0.5, f64::from(j) + 0.5);
+                    h.fill_weight(x, y, 1.0 + 2.0 * x - 0.5 * y);
+                }
+            }
+            let plane = Model::new2("plane", &["a", "b", "c"], vec![0.0, 1.0, 0.0], |x, y, p| {
+                p[0] + p[1] * x + p[2] * y
+            });
+            let r = h.fit(&plane);
+            assert!(r.valid && (r.params[2] + 0.5).abs() < 1e-6, "{r:?}");
+            assert_eq!(r.ndf, 8 * 6 - 3);
+
+            let mut h3 = Hist::reg(4, 0.0, 4.0)
+                .reg(4, 0.0, 4.0)
+                .reg(4, 0.0, 4.0)
+                .weight();
+            for i in 0..4 {
+                for j in 0..4 {
+                    for k in 0..4 {
+                        let (x, y, z) =
+                            (f64::from(i) + 0.5, f64::from(j) + 0.5, f64::from(k) + 0.5);
+                        h3.fill_weight(x, y, z, 3.0 + x + y + z);
+                    }
+                }
+            }
+            let flat = Model::new3("f", &["a", "b"], vec![0.0, 0.5], |x, y, z, p| {
+                p[0] + p[1] * (x + y + z)
+            });
+            let r = h3.fit(&flat);
+            assert!(r.valid && (r.params[1] - 1.0).abs() < 1e-6, "{r:?}");
         }
     }
 }
