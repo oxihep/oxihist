@@ -1,6 +1,6 @@
 [package]
 name = "oxihist"
-version = "0.6.3"
+version = "0.7.0"
 edition = "2024"
 rust-version = "1.100"
 license = "MIT"
@@ -19,14 +19,14 @@ serde = { version = "1", features = ["derive"], optional = true }
 # Until these are on crates.io they are git dependencies on release tags;
 # `version` is kept so the switch is just dropping `git`/`tag`. They must name
 # the same tags oxiroot does, so one copy of each is built.
-oxiplot = { git = "https://github.com/oxihep/oxiplot", tag = "v0.4.3", version = "0.4.3", default-features = false, optional = true }
-oxifit = { git = "https://github.com/oxihep/oxifit", tag = "v0.1.2", version = "0.1.2", optional = true }
+oxiplot = { git = "https://github.com/oxihep/oxiplot", tag = "v0.5.0", version = "0.5.0", default-features = false, optional = true }
+oxifit = { git = "https://github.com/oxihep/oxifit", tag = "v0.2.0", version = "0.2.0", optional = true }
 foldhash = "0.2"
 
 [dev-dependencies]
 proptest = "1"
 serde_json = "1"
-oxiplot = { git = "https://github.com/oxihep/oxiplot", tag = "v0.4.3", version = "0.4.3", default-features = false }
+oxiplot = { git = "https://github.com/oxihep/oxiplot", tag = "v0.5.0", version = "0.5.0", default-features = false }
 
 [features]
 # Parallel fill from a slice (`fill_par`).

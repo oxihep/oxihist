@@ -6,6 +6,16 @@ Notable changes to oxihist, by release. The format follows
 
 ## [Unreleased]
 
+## [0.7.0]
+
+### Changed
+
+- **oxifit 0.2.0 and oxiplot 0.5.0** behind the `fit` and `plot` features.
+  oxifit 0.2 adds global minimizers (multistart, differential evolution),
+  runs HESSE after MIGRAD by default, and makes `FitResult`
+  `#[non_exhaustive]`; `h.fit(&model)` is unchanged. A minor version because
+  those crates' types appear in this crate's API.
+
 ## [0.6.3]
 
 ### Changed
