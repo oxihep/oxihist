@@ -6,6 +6,13 @@ Notable changes to oxihist, by release. The format follows
 
 ## [Unreleased]
 
+## [0.9.1]
+
+### Changed
+
+- **oxifit 0.4.1 and oxiplot 0.7.1**: oxifit's numerical `integrate` no
+  longer hangs on a narrow peak or a `NaN` integrand.
+
 ## [0.9.0]
 
 ### Changed
