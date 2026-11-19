@@ -6,6 +6,16 @@ Notable changes to oxihist, by release. The format follows
 
 ## [Unreleased]
 
+## [0.8.0]
+
+### Changed
+
+- **oxifit 0.3.0 and oxiplot 0.6.0** behind the `fit` and `plot` features:
+  CMA-ES and Levenberg–Marquardt minimizers, sum models (`sig + bkg`),
+  Gaussian parameter constraints, profile likelihoods and 2-D contours
+  (`h.profile(…)`, `h.contour(…)` on a histogram through `FitExt`), and
+  oxiplot's `fit_contour`/`fit_profile` to draw them.
+
 ## [0.7.0]
 
 ### Changed
