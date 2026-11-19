@@ -6,6 +6,19 @@ Notable changes to oxihist, by release. The format follows
 
 ## [Unreleased]
 
+## [0.10.0]
+
+### Added
+
+- **2-D and 3-D histograms can be fitted** (the `fit` feature): they
+  implement oxifit's `FitDataNd`, each in-range bin a point at its center
+  with its value and `√variance`, so `h.fit(&model)` works with a model of
+  as many variables (`Model::new2`, `Model::product`, …).
+
+### Changed
+
+- **oxifit 0.5.0 and oxiplot 0.8.0** behind the `fit` and `plot` features.
+
 ## [0.9.1]
 
 ### Changed
