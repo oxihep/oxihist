@@ -17,7 +17,7 @@ and [oxifit](https://github.com/oxihep/oxifit) fits them (the `fit` feature).
 
 ```toml
 [dependencies]
-oxihist = { git = "https://github.com/oxihep/oxihist", tag = "v0.8.0" }
+oxihist = { git = "https://github.com/oxihep/oxihist", tag = "v0.9.0" }
 ```
 
 ```rust

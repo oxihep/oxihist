@@ -6,6 +6,15 @@ Notable changes to oxihist, by release. The format follows
 
 ## [Unreleased]
 
+## [0.9.0]
+
+### Changed
+
+- **oxifit 0.4.0 and oxiplot 0.7.0** behind the `fit` and `plot` features:
+  unbinned and extended likelihood fits (on `oxifit::Events`), the SumW2
+  correction, toy studies and simultaneous fits — histograms take part in a
+  `Simultaneous` fit as channels.
+
 ## [0.8.0]
 
 ### Changed
