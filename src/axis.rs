@@ -5,6 +5,7 @@
 //! **overflow** bin (index `size`), when the axis has them; otherwise they are
 //! dropped. This is boost-histogram's convention.
 
+use crate::cast;
 use std::fmt;
 
 use crate::error::{Error, Result};
@@ -42,7 +43,7 @@ macro_rules! value_from {
     ($($t:ty => $v:ident as $c:ty),* $(,)?) => {$(
         impl From<$t> for Value<'_> {
             fn from(x: $t) -> Self {
-                Value::$v(x as $c)
+                Value::$v(<$c>::from(x))
             }
         }
     )*};
@@ -50,8 +51,14 @@ macro_rules! value_from {
 value_from!(
     f64 => Num as f64, f32 => Num as f64,
     i64 => Int as i64, i32 => Int as i64, i16 => Int as i64, i8 => Int as i64,
-    u32 => Int as i64, u16 => Int as i64, u8 => Int as i64, usize => Int as i64,
+    u32 => Int as i64, u16 => Int as i64, u8 => Int as i64,
 );
+
+impl From<usize> for Value<'_> {
+    fn from(x: usize) -> Self {
+        Value::Int(i64::try_from(x).unwrap_or(i64::MAX))
+    }
+}
 
 impl<'a> From<&'a str> for Value<'a> {
     fn from(s: &'a str) -> Self {
@@ -445,7 +452,7 @@ impl Axis {
         match &self.kind {
             AxisKind::Regular { bins, .. } => *bins,
             AxisKind::Variable { edges } => edges.len() - 1,
-            AxisKind::Integer { lo, hi } => (hi - lo) as usize,
+            AxisKind::Integer { lo, hi } => cast::span(hi - lo),
             AxisKind::StrCategory { categories, .. } => categories.len(),
             AxisKind::IntCategory { categories, .. } => categories.len(),
             AxisKind::Boolean => 2,
@@ -536,7 +543,7 @@ impl Axis {
             AxisKind::StrCategory { categories, .. } => categories[i].clone(),
             AxisKind::IntCategory { categories, .. } => categories[i].to_string(),
             AxisKind::Boolean => (i == 1).to_string(),
-            AxisKind::Integer { lo, .. } => (lo + i as i64).to_string(),
+            AxisKind::Integer { lo, .. } => (lo + i64::try_from(i).unwrap_or(i64::MAX)).to_string(),
             _ => {
                 let e = self.plot_edges();
                 format!("[{}, {})", e[i], e[i + 1])
@@ -601,30 +608,30 @@ impl Axis {
     pub(crate) fn other_position(&self, v: Value<'_>) -> Option<Option<usize>> {
         let (i, n): (isize, usize) = match (&self.kind, v) {
             (AxisKind::Integer { lo, hi }, Value::Int(k)) => {
-                (integer_index(k, *lo, *hi), (hi - lo) as usize)
+                (integer_index(k, *lo, *hi), cast::span(hi - lo))
             }
             (AxisKind::Integer { lo, hi }, Value::Num(x)) => {
-                let n = (hi - lo) as usize;
+                let n = cast::span(hi - lo);
                 if x.is_nan() {
-                    (n as isize, n)
+                    (cast::signed(n), n)
                 } else {
-                    (integer_index(x.floor() as i64, *lo, *hi), n)
+                    (integer_index(cast::floor_i64(x), *lo, *hi), n)
                 }
             }
             (AxisKind::StrCategory { categories, growth }, Value::Str(s)) => {
                 let n = categories.len();
                 match self.find_str(categories, s) {
-                    Some(k) => (k as isize, n),
+                    Some(k) => (cast::signed(k), n),
                     None if *growth => return None,
-                    None => (n as isize, n),
+                    None => (cast::signed(n), n),
                 }
             }
             (AxisKind::IntCategory { categories, growth }, Value::Int(k)) => {
                 let n = categories.len();
                 match self.find_int(categories, k) {
-                    Some(j) => (j as isize, n),
+                    Some(j) => (cast::signed(j), n),
                     None if *growth => return None,
-                    None => (n as isize, n),
+                    None => (cast::signed(n), n),
                 }
             }
             (AxisKind::Boolean, Value::Bool(b)) => (isize::from(b), 2),
@@ -640,17 +647,17 @@ impl Axis {
         let under = usize::from(self.underflow);
         if i < 0 {
             self.underflow.then_some(0)
-        } else if i as usize >= n {
+        } else if cast::unsigned(i) >= n {
             self.overflow.then_some(n + under)
         } else {
-            Some(i as usize + under)
+            Some(cast::unsigned(i) + under)
         }
     }
 
     /// [`locate`](Axis::locate) for every axis and value.
     #[inline(never)]
     fn locate_general(&self, v: Value<'_>, axis: usize) -> Result<Locate> {
-        let n = self.size() as isize;
+        let n = cast::signed(self.size());
         let mismatch = |expected: &'static str| Error::ValueType {
             axis,
             expected,
@@ -669,7 +676,7 @@ impl Axis {
                 let i = match v {
                     Value::Int(i) => i,
                     Value::Num(x) if x.is_nan() => return Ok(Locate::Index(n)),
-                    Value::Num(x) => x.floor() as i64,
+                    Value::Num(x) => cast::floor_i64(x),
                     Value::Bool(b) => i64::from(b),
                     Value::Str(_) => return Err(mismatch("an integer")),
                 };
@@ -678,7 +685,7 @@ impl Axis {
                 } else if i >= *hi {
                     n
                 } else {
-                    (i - lo) as isize
+                    cast::span_signed(i - lo)
                 }
             }
             AxisKind::StrCategory { categories, growth } => {
@@ -687,7 +694,7 @@ impl Axis {
                 };
                 let found = self.find_str(categories, s);
                 match found {
-                    Some(i) => i as isize,
+                    Some(i) => cast::signed(i),
                     None if *growth => return Ok(Locate::Grow),
                     None => n,
                 }
@@ -695,12 +702,12 @@ impl Axis {
             AxisKind::IntCategory { categories, growth } => {
                 let i = match v {
                     Value::Int(i) => i,
-                    Value::Num(x) if x.fract() == 0.0 && x.is_finite() => x as i64,
+                    Value::Num(x) if x.fract() == 0.0 && x.is_finite() => cast::floor_i64(x),
                     _ => return Err(mismatch("an integer")),
                 };
                 let found = self.find_int(categories, i);
                 match found {
-                    Some(k) => k as isize,
+                    Some(k) => cast::signed(k),
                     None if *growth => return Ok(Locate::Grow),
                     None => n,
                 }
@@ -765,11 +772,11 @@ impl Axis {
                 categories.len()
             }
             (AxisKind::IntCategory { categories, .. }, Value::Num(x)) => {
-                categories.push(x as i64);
+                categories.push(cast::floor_i64(x));
                 if self.lookup.ints.len() + 1 == categories.len() {
                     self.lookup
                         .ints
-                        .entry(x as i64)
+                        .entry(cast::floor_i64(x))
                         .or_insert(categories.len() - 1);
                 }
                 categories.len()
@@ -787,18 +794,18 @@ impl Axis {
     /// `None` if `i` is a flow bin the axis does not have, or out of range.
     #[inline]
     pub(crate) fn position(&self, i: isize) -> Option<usize> {
-        let n = self.size() as isize;
+        let n = cast::signed(self.size());
         if i < -1 || i > n || (i == -1 && !self.underflow) || (i == n && !self.overflow) {
             return None;
         }
-        Some((i + isize::from(self.underflow)) as usize)
+        Some(cast::unsigned(i + isize::from(self.underflow)))
     }
 }
 
 /// The bin (`-1..=bins`) of `x` on a regular axis over `[lo, hi)`.
 #[inline(always)]
 fn regular_index(x: f64, bins: usize, lo: f64, hi: f64) -> isize {
-    let n = bins as isize;
+    let n = cast::signed(bins);
     // Compare against the edges themselves, not the scaled coordinate:
     // rounding can scale a value just below `hi` to exactly `bins`, which
     // must still be the last bin.
@@ -808,7 +815,7 @@ fn regular_index(x: f64, bins: usize, lo: f64, hi: f64) -> isize {
         -1
     } else {
         let z = (x - lo) / (hi - lo) * bins as f64;
-        (z.floor() as isize).clamp(0, n - 1)
+        cast::floor_isize(z).clamp(0, n - 1)
     }
 }
 
@@ -818,22 +825,22 @@ fn integer_index(k: i64, lo: i64, hi: i64) -> isize {
     if k < lo {
         -1
     } else if k >= hi {
-        (hi - lo) as isize
+        cast::span_signed(hi - lo)
     } else {
-        (k - lo) as isize
+        cast::span_signed(k - lo)
     }
 }
 
 /// The bin (`-1..=edges.len() - 1`) of `x` on a variable axis.
 #[inline]
 fn variable_index(x: f64, edges: &[f64]) -> isize {
-    let n = edges.len() as isize - 1;
+    let n = cast::signed(edges.len()) - 1;
     if x.is_nan() || x >= edges[edges.len() - 1] {
         n
     } else if x < edges[0] {
         -1
     } else {
-        edges.partition_point(|&e| e <= x) as isize - 1
+        cast::signed(edges.partition_point(|&e| e <= x)) - 1
     }
 }
 

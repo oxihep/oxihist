@@ -1,5 +1,6 @@
 //! [`Histogram`]: `D` axes and one storage accumulator per bin.
 
+use crate::cast;
 use std::marker::PhantomData;
 
 use crate::axis::{Axis, Locate, Value};
@@ -254,7 +255,7 @@ impl<S: Storage, const D: usize> Histogram<S, D> {
             for i in 0..D {
                 let p = k % ext[i];
                 k /= ext[i];
-                idx[i] = p as isize - under[i];
+                idx[i] = cast::signed(p) - under[i];
                 off += p * strides[i];
             }
             (idx, off)
@@ -293,7 +294,7 @@ impl<S: Storage, const D: usize> Histogram<S, D> {
             let in_range = idx
                 .iter()
                 .zip(&self.axes)
-                .all(|(&i, a)| i >= 0 && (i as usize) < a.size());
+                .all(|(&i, a)| i >= 0 && cast::unsigned(i) < a.size());
             (flow || in_range).then_some((idx, b))
         })
     }
@@ -389,7 +390,7 @@ impl<S: Storage, const D: usize> Histogram<S, D> {
                     Locate::Index(j) => j,
                     Locate::Grow => {
                         self.grow(i, v);
-                        self.axes[i].size() as isize - 1
+                        cast::signed(self.axes[i].size()) - 1
                     }
                 };
                 map.push(to);
@@ -401,7 +402,7 @@ impl<S: Storage, const D: usize> Histogram<S, D> {
             for (i, map) in maps.iter().enumerate() {
                 if let Some(map) = map {
                     // Growing axes have no flow bins, so every index is in range.
-                    idx[i] = map[idx[i] as usize];
+                    idx[i] = map[cast::unsigned(idx[i])];
                 }
             }
             let off = self
@@ -472,7 +473,7 @@ impl<S: Storage, const D: usize> Histogram<S, D> {
                 Locate::Index(k) => k,
                 Locate::Grow => {
                     self.grow(i, values[i]);
-                    self.axes[i].size() as isize - 1
+                    cast::signed(self.axes[i].size()) - 1
                 }
             };
         }
@@ -584,16 +585,16 @@ impl<S: Storage, const D: usize> Histogram<S, D> {
         let mut out = Self::from_axes(axes);
         out.name.clone_from(&self.name);
         out.title.clone_from(&self.title);
-        let n = n as isize;
+        let n = cast::signed(n);
         for (mut idx, o) in self.cells() {
             let b = &self.bins[o];
             let i = idx[axis];
             idx[axis] = if (0..n).contains(&i) {
-                i / factor as isize
+                i / cast::signed(factor)
             } else if i < 0 {
                 -1
             } else {
-                n / factor as isize
+                n / cast::signed(factor)
             };
             let off = out.offset(idx).expect("rebinning keeps the flow bins");
             S::merge(&mut out.bins[off], b);
@@ -872,9 +873,9 @@ impl<S: Storage> Histogram<S, 2> {
     #[must_use]
     pub fn values_grid(&self) -> Vec<Vec<f64>> {
         let (nx, ny) = (self.axes[0].size(), self.axes[1].size());
-        (0..nx as isize)
+        (0..cast::signed(nx))
             .map(|ix| {
-                (0..ny as isize)
+                (0..cast::signed(ny))
                     .map(|iy| self.value([ix, iy]).unwrap_or(0.0))
                     .collect()
             })

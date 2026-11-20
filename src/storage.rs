@@ -11,6 +11,7 @@
 //! The first three are [`CountStorage`]s (filled with a weight); the last two
 //! are [`MeanStorage`]s (filled with a sample value and a weight).
 
+use crate::cast;
 use std::fmt::Debug;
 
 /// What a histogram's bins hold. The storage types themselves are empty
@@ -97,13 +98,13 @@ impl Storage for Int64 {
         *a += b;
     }
     fn scale(bin: &mut i64, c: f64) {
-        *bin = (*bin as f64 * c).round() as i64;
+        *bin = cast::round_i64(*bin as f64 * c);
     }
 }
 
 impl CountStorage for Int64 {
     fn add(bin: &mut i64, w: f64) {
-        *bin += w.round() as i64;
+        *bin += cast::round_i64(w);
     }
 }
 

@@ -1,6 +1,6 @@
 [package]
 name = "oxihist"
-version = "0.11.0"
+version = "0.12.0"
 edition = "2024"
 rust-version = "1.100"
 license = "MIT"
@@ -19,14 +19,14 @@ serde = { version = "1", features = ["derive"], optional = true }
 # Until these are on crates.io they are git dependencies on release tags;
 # `version` is kept so the switch is just dropping `git`/`tag`. They must name
 # the same tags oxiroot does, so one copy of each is built.
-oxiplot = { git = "https://github.com/oxihep/oxiplot", tag = "v0.9.0", version = "0.9.0", default-features = false, optional = true }
-oxifit = { git = "https://github.com/oxihep/oxifit", tag = "v0.7.0", version = "0.7.0", optional = true }
+oxiplot = { git = "https://github.com/oxihep/oxiplot", tag = "v0.10.0", version = "0.10.0", default-features = false, optional = true }
+oxifit = { git = "https://github.com/oxihep/oxifit", tag = "v0.8.0", version = "0.8.0", optional = true }
 foldhash = "0.2"
 
 [dev-dependencies]
 proptest = "1"
 serde_json = "1"
-oxiplot = { git = "https://github.com/oxihep/oxiplot", tag = "v0.9.0", version = "0.9.0", default-features = false }
+oxiplot = { git = "https://github.com/oxihep/oxiplot", tag = "v0.10.0", version = "0.10.0", default-features = false }
 
 [features]
 # Parallel fill from a slice (`fill_par`).
@@ -47,3 +47,10 @@ missing_docs = "warn"
 
 [lints.clippy]
 all = "warn"
+# Casts that can lose information: fixed (`From`, `try_from`) or justified
+# where they stand. `cast_precision_loss` stays off: the integer → f64 casts
+# are counts and bin indices, exact below 2⁵³.
+cast_possible_truncation = "warn"
+cast_sign_loss = "warn"
+cast_possible_wrap = "warn"
+cast_lossless = "warn"
