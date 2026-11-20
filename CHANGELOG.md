@@ -6,6 +6,17 @@ Notable changes to oxihist, by release. The format follows
 
 ## [Unreleased]
 
+## [0.13.0]
+
+API review toward 1.0 (breaking).
+
+### Changed
+
+- **`Histogram::std` is now `std_dev`**, the name the oxihep crates use for
+  a standard deviation everywhere.
+- **oxifit 0.9.0 and oxiplot 0.11.0** behind the `fit` and `plot` features
+  (renamed toggles, `XyPoints`, `BinomialData`; see their changelogs).
+
 ## [0.12.0]
 
 ### Changed

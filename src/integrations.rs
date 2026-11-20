@@ -216,7 +216,7 @@ mod fit {
             let model = Model::new("e", &["n", "tau"], vec![80.0, 1.5], |x, p| {
                 p[0] * (-x / p[1]).exp()
             });
-            let opts = FitOptions::new().with_bin_integration(true);
+            let opts = FitOptions::new().bin_integration(true);
             let r = h.fit_opts(&model, &opts);
             assert!(
                 r.valid && (r.params[1] - 2.0).abs() < 1e-4,

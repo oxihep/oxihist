@@ -159,7 +159,7 @@ impl<S: Storage> Histogram<S, 1> {
     /// The value-weighted standard deviation of the bin centers (population
     /// form; `NaN` for an empty histogram).
     #[must_use]
-    pub fn std(&self) -> f64 {
+    pub fn std_dev(&self) -> f64 {
         let (c, v) = self.centers_values();
         let sw: f64 = v.iter().sum();
         let m = c.iter().zip(&v).map(|(c, w)| c * w).sum::<f64>() / sw;
@@ -285,7 +285,7 @@ mod tests {
         assert_eq!(h.integral(false), 4.0);
         assert_eq!(h.integral(true), 5.0);
         assert!((h.mean() - 1.5).abs() < 1e-12);
-        assert!((h.std() - 0.5f64.sqrt()).abs() < 1e-12);
+        assert!((h.std_dev() - 0.5f64.sqrt()).abs() < 1e-12);
     }
 
     #[test]
