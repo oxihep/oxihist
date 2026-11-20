@@ -108,6 +108,13 @@ mod fit {
                 })
                 .collect()
         }
+
+        /// The bins' `(lo, hi)` for bin-integrated fits
+        /// (`FitOptions::with_bin_integration`); `None` for a categorical axis.
+        fn bin_edges(&self) -> Option<Vec<(f64, f64)>> {
+            let edges = self.axis(0).edges()?;
+            Some(edges.windows(2).map(|w| (w[0], w[1])).collect())
+        }
     }
 
     impl<S: Storage> FitDataNd for Histogram<S, 2> {
@@ -162,7 +169,7 @@ mod fit {
 
     #[cfg(test)]
     mod tests {
-        use oxifit::{FitExt, Model};
+        use oxifit::{FitData, FitExt, FitOptions, Model};
 
         use crate::Hist;
 
@@ -176,6 +183,41 @@ mod fit {
             let r = h.fit(&Model::polynomial("line", 1).with_params(vec![0.0, 1.0]));
             assert!(r.valid);
             assert!((r.params[1] - 2.0).abs() < 1e-6, "{:?}", r.params);
+        }
+
+        #[test]
+        fn variable_bins_are_integrated_over_their_edges() {
+            // Contents are the exact bin averages of 100·e^(−x/2) over very
+            // uneven bins: only a fit averaging the model over each bin's real
+            // edges recovers the slope.
+            let edges = [0.0, 0.5, 1.5, 3.0, 5.0, 8.0];
+            let mut h = Hist::var(&edges).weight();
+            for w in edges.windows(2) {
+                let integral = 200.0 * ((-w[0] / 2.0).exp() - (-w[1] / 2.0).exp());
+                // Many small fills: errors of 1 % of the content.
+                for _ in 0..10_000 {
+                    h.fill_weight(0.5 * (w[0] + w[1]), integral / (w[1] - w[0]) / 1e4);
+                }
+            }
+            let got = h.bin_edges().expect("a numeric axis");
+            assert_eq!(
+                got,
+                vec![(0.0, 0.5), (0.5, 1.5), (1.5, 3.0), (3.0, 5.0), (5.0, 8.0)]
+            );
+            let model = Model::new("e", &["n", "tau"], vec![80.0, 1.5], |x, p| {
+                p[0] * (-x / p[1]).exp()
+            });
+            let opts = FitOptions::new().with_bin_integration(true);
+            let r = h.fit_opts(&model, &opts);
+            assert!(
+                r.valid && (r.params[1] - 2.0).abs() < 1e-4,
+                "{:?}",
+                r.params
+            );
+            // At the bin centers the same data pull the slope away.
+            let r = h.fit(&model);
+            assert!((r.params[1] - 2.0).abs() > 1e-2, "{:?}", r.params);
+            assert!(Hist::str_cat(&["a", "b"]).double().bin_edges().is_none());
         }
 
         #[test]

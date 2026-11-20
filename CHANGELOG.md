@@ -6,6 +6,23 @@ Notable changes to oxihist, by release. The format follows
 
 ## [Unreleased]
 
+## [0.11.0]
+
+### Added
+
+- **Bin-integrated fits use the real bin edges.** A 1-D histogram's
+  `FitData` now reports each bin's `(lo, hi)`, so oxifit's
+  `FitOptions::with_bin_integration(true)` averages the model over the
+  actual bins of a variable-width axis instead of guessing them halfway
+  between centers.
+
+### Changed
+
+- **oxifit 0.7.0 and oxiplot 0.9.0** behind the `fit` and `plot` features:
+  oxifit gains a `Cost` trait and `Fitter`, CLs limits, template fits,
+  sPlot, efficiency fits, bin-integrated fits and an ensemble sampler. No
+  oxihist code changes.
+
 ## [0.10.0]
 
 ### Added
