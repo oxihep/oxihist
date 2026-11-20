@@ -6,6 +6,13 @@ Notable changes to oxihist, by release. The format follows
 
 ## [Unreleased]
 
+## [0.13.1]
+
+### Changed
+
+- **oxiplot 0.11.1** behind the `plot` feature: the legend's automatic
+  placement keeps off text annotations.
+
 ## [0.13.0]
 
 API review toward 1.0 (breaking).
