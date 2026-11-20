@@ -141,7 +141,7 @@ fn main() {
     for i in (20..40).step_by(2) {
         println!(
             "{:>10.1} {:>10.0} {:>8.1}",
-            60.0 + i as f64 + 0.5,
+            60.0 + f64::from(i) + 0.5,
             m_mumu.value([i as isize]).unwrap(),
             m_mumu.variance([i as isize]).unwrap().sqrt()
         );

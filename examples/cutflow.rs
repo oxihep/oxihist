@@ -107,8 +107,8 @@ fn main() {
     for (i, step) in steps.iter().enumerate() {
         print!("{step:<15}");
         for j in 0..channels.len() {
-            let n = cutflow.value([i as isize, j as isize]).unwrap();
-            let first = cutflow.value([0, j as isize]).unwrap();
+            let n = cutflow.value([i.cast_signed(), j.cast_signed()]).unwrap();
+            let first = cutflow.value([0, j.cast_signed()]).unwrap();
             print!(" {n:>10.1} {:>6.1}%", 100.0 * n / first);
         }
         println!();

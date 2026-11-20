@@ -6,6 +6,19 @@ Notable changes to oxihist, by release. The format follows
 
 ## [Unreleased]
 
+## [0.12.0]
+
+### Changed
+
+- **oxifit 0.8.0 and oxiplot 0.10.0** behind the `fit` and `plot` features
+  (oxifit: NUTS sampling and faster gradient fits; oxiplot: result plots,
+  and `#[non_exhaustive]` on its public enums).
+- **`ThreadedHist` implements `Debug`**.
+- **Lints**: the cast lints are on. The binning code's `usize` ↔ `isize`
+  bin-index conversions go through a few inlined helpers that state why
+  each is exact (bins live in a `Vec`), so the fill paths are unchanged;
+  `From<usize> for Value` saturates instead of wrapping.
+
 ## [0.11.0]
 
 ### Added

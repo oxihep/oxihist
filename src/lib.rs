@@ -35,6 +35,7 @@
 
 mod axis;
 mod builder;
+mod cast;
 mod error;
 mod histogram;
 mod integrations;

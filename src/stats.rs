@@ -1,6 +1,7 @@
 //! Statistics of 1-D histograms, and drawing random values from them.
 
 use crate::axis::Axis;
+use crate::cast;
 use crate::histogram::Histogram;
 use crate::storage::{CountStorage, Storage};
 
@@ -214,7 +215,7 @@ impl<S: Storage> Histogram<S, 1> {
         let mut out = Histogram::new([self.axis(0).clone()]);
         out.name.clone_from(&self.name);
         out.title.clone_from(&self.title);
-        let n = self.axis(0).size() as isize;
+        let n = cast::signed(self.axis(0).size());
         let order: Vec<isize> = if forward {
             (0..n).collect()
         } else {

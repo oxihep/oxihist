@@ -80,10 +80,10 @@ proptest! {
         let below = hi.next_down(); // the largest f64 < hi
         if below >= lo {
             h.fill(below);
-            prop_assert_eq!(h.value([bins as isize - 1]), Some(1.0));
+            prop_assert_eq!(h.value([bins.cast_signed() - 1]), Some(1.0));
         }
         h.fill(hi);
-        prop_assert_eq!(h.value([bins as isize]), Some(1.0));
+        prop_assert_eq!(h.value([bins.cast_signed()]), Some(1.0));
     }
 
     /// Filling copies of a growing-category template on different "threads",
@@ -111,7 +111,7 @@ proptest! {
             let name = serial.axis(0).bin_label(c).unwrap();
             let ca = (0..a.axis(0).size()).find(|&k| a.axis(0).bin_label(k).as_deref() == Some(&name)).unwrap();
             for x in -1..=4 {
-                prop_assert_eq!(a.value([ca as isize, x]), serial.value([c as isize, x]));
+                prop_assert_eq!(a.value([ca.cast_signed(), x]), serial.value([c.cast_signed(), x]));
             }
         }
     }

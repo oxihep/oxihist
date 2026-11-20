@@ -92,6 +92,17 @@ pub struct ThreadedHist<H: Mergeable> {
     count: AtomicUsize,
 }
 
+impl<H: Mergeable> std::fmt::Debug for ThreadedHist<H> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ThreadedHist")
+            .field(
+                "copies",
+                &self.count.load(std::sync::atomic::Ordering::Relaxed),
+            )
+            .finish_non_exhaustive()
+    }
+}
+
 impl<H: Mergeable> ThreadedHist<H> {
     /// An accumulator whose per-thread copies start as clones of `template`
     /// (normally empty).

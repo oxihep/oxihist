@@ -19,7 +19,10 @@ mod plot {
             Histogram::values(self, false)
         }
         fn error(&self, i: usize) -> f64 {
-            self.variance([i as isize]).unwrap_or(0.0).max(0.0).sqrt()
+            self.variance([crate::cast::signed(i)])
+                .unwrap_or(0.0)
+                .max(0.0)
+                .sqrt()
         }
         fn x_labels(&self) -> Option<Vec<String>> {
             let axis = self.axis(0);
@@ -103,7 +106,7 @@ mod fit {
             let centers = self.axis(0).centers();
             (0..self.axis(0).size())
                 .map(|i| {
-                    let b = self.bin([i as isize]).expect("in range");
+                    let b = self.bin([crate::cast::signed(i)]).expect("in range");
                     Point::new(centers[i], S::value(b), S::variance(b).max(0.0).sqrt())
                 })
                 .collect()
@@ -126,7 +129,9 @@ mod fit {
             let mut out = Vec::with_capacity(cx.len() * cy.len());
             for (i, &x) in cx.iter().enumerate() {
                 for (j, &y) in cy.iter().enumerate() {
-                    let b = self.bin([i as isize, j as isize]).expect("in range");
+                    let b = self
+                        .bin([crate::cast::signed(i), crate::cast::signed(j)])
+                        .expect("in range");
                     out.push(PointNd::new(
                         [x, y, 0.0],
                         S::value(b),
@@ -153,7 +158,11 @@ mod fit {
                 for (j, &y) in c[1].iter().enumerate() {
                     for (k, &z) in c[2].iter().enumerate() {
                         let b = self
-                            .bin([i as isize, j as isize, k as isize])
+                            .bin([
+                                crate::cast::signed(i),
+                                crate::cast::signed(j),
+                                crate::cast::signed(k),
+                            ])
                             .expect("in range");
                         out.push(PointNd::new(
                             [x, y, z],

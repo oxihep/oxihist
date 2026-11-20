@@ -52,8 +52,8 @@ fn main() {
         "pT_true [GeV]", "jets", "response ⟨R⟩", "resolution σ_R", "JES correction"
     );
     for i in 0..edges.len() - 1 {
-        let bin = profile.bin([i as isize]).expect("in range");
-        let err = profile.variance([i as isize]).unwrap().sqrt();
+        let bin = profile.bin([i.cast_signed()]).expect("in range");
+        let err = profile.variance([i.cast_signed()]).unwrap().sqrt();
         let spread = bin.sample_variance().sqrt();
         println!(
             "{:>6.0} – {:<5.0} {:>8.0} {:>8.4} ± {:.4} {:>14.3} {:>14.3}",
