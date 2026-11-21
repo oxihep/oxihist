@@ -10,6 +10,9 @@
 //!
 //! The first three are [`CountStorage`]s (filled with a weight); the last two
 //! are [`MeanStorage`]s (filled with a sample value and a weight).
+//!
+//! A bin knows nothing of where inside it an entry fell: the histogram keeps
+//! that, for all bins together, in its [`FillStats`](crate::FillStats).
 
 use crate::cast;
 use std::fmt::Debug;
@@ -36,12 +39,50 @@ pub trait Storage: Clone + Debug + Default + Send + Sync + 'static {
     /// Multiply the bin by `c` (a count's value by `c` and its variance by
     /// `c²`; a profile's mean by `c` and its spread by `c²`).
     fn scale(bin: &mut Self::Bin, c: f64);
+
+    /// Whether a bin holds samples of a value (a profile) instead of a
+    /// count. Scaling a profile scales the sampled values, not the weights,
+    /// which decides what happens to a histogram's
+    /// [`FillStats`](crate::FillStats).
+    const SAMPLED: bool = false;
+
+    /// What the bin adds to its histogram's statistics when they are
+    /// estimated from the bins
+    /// ([`Histogram::binned_stats`](crate::Histogram::binned_stats)). The
+    /// default is a count's: the value as `Σw` and the variance as `Σw²`.
+    fn sums(bin: &Self::Bin) -> BinSums {
+        BinSums {
+            sum_w: Self::value(bin),
+            sum_w2: Self::variance(bin),
+            sum_ws: 0.0,
+            sum_ws2: 0.0,
+        }
+    }
+}
+
+/// The sums one bin holds, as far as its accumulator knows them: see
+/// [`Storage::sums`].
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct BinSums {
+    /// `Σw` of the bin's entries.
+    pub sum_w: f64,
+    /// `Σw²` of the bin's entries.
+    pub sum_w2: f64,
+    /// `Σw·s` of a profile bin's samples (0 for a count).
+    pub sum_ws: f64,
+    /// `Σw·s²` of a profile bin's samples (0 for a count).
+    pub sum_ws2: f64,
 }
 
 /// A storage filled with a weight per entry: [`Double`], [`Int64`], [`Weight`].
 pub trait CountStorage: Storage {
     /// Add an entry of weight `w`.
     fn add(bin: &mut Self::Bin, w: f64);
+
+    /// A bin with the given value and variance, as close as the storage can
+    /// hold them: [`Double`] and [`Int64`] keep the value only (their
+    /// variance is the value), and [`Int64`] rounds it.
+    fn bin(value: f64, variance: f64) -> Self::Bin;
 }
 
 /// A storage filled with a sample value and a weight per entry: [`Mean`],
@@ -78,6 +119,9 @@ impl CountStorage for Double {
     fn add(bin: &mut f64, w: f64) {
         *bin += w;
     }
+    fn bin(value: f64, _variance: f64) -> f64 {
+        value
+    }
 }
 
 /// Exact `i64` counts. A weight is rounded to the nearest integer, and scaling
@@ -105,6 +149,9 @@ impl Storage for Int64 {
 impl CountStorage for Int64 {
     fn add(bin: &mut i64, w: f64) {
         *bin += cast::round_i64(w);
+    }
+    fn bin(value: f64, _variance: f64) -> i64 {
+        cast::round_i64(value)
     }
 }
 
@@ -145,6 +192,9 @@ impl CountStorage for Weight {
     fn add(bin: &mut WeightedSum, w: f64) {
         bin.value += w;
         bin.variance += w * w;
+    }
+    fn bin(value: f64, variance: f64) -> WeightedSum {
+        WeightedSum { value, variance }
     }
 }
 
@@ -204,6 +254,16 @@ impl Storage for Mean {
     fn scale(bin: &mut MeanBin, c: f64) {
         bin.value *= c;
         bin.sum_of_deltas_squared *= c * c;
+    }
+    const SAMPLED: bool = true;
+    fn sums(bin: &MeanBin) -> BinSums {
+        // Frequency weights: without a record of Σw², take it to be Σw.
+        BinSums {
+            sum_w: bin.count,
+            sum_w2: bin.count,
+            sum_ws: bin.count * bin.value,
+            sum_ws2: bin.sum_of_deltas_squared + bin.count * bin.value * bin.value,
+        }
     }
 }
 
@@ -294,6 +354,16 @@ impl Storage for WeightedMean {
     fn scale(bin: &mut WeightedMeanBin, c: f64) {
         bin.value *= c;
         bin.sum_of_weighted_deltas_squared *= c * c;
+    }
+    const SAMPLED: bool = true;
+    fn sums(bin: &WeightedMeanBin) -> BinSums {
+        BinSums {
+            sum_w: bin.sum_of_weights,
+            sum_w2: bin.sum_of_weights_squared,
+            sum_ws: bin.sum_of_weights * bin.value,
+            sum_ws2: bin.sum_of_weighted_deltas_squared
+                + bin.sum_of_weights * bin.value * bin.value,
+        }
     }
 }
 

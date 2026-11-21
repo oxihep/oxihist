@@ -2,7 +2,7 @@
 //! error, never a histogram that misbehaves later.
 #![cfg(feature = "serde")]
 
-use oxihist::{Axis, Double, Hist, Histogram};
+use oxihist::{Axis, Double, Hist, Histogram, Mean};
 use serde_json::{Value, json};
 
 /// A serialised 1-D `Double` histogram over `axis`, as JSON to tamper with.
@@ -117,4 +117,82 @@ fn a_loaded_category_axis_finds_its_categories() {
     back.fill("c17");
     assert_eq!(back.value([13]), Some(1.0));
     assert_eq!(back.value([17]), Some(1.0));
+}
+
+#[test]
+fn fill_statistics_round_trip() {
+    let mut h = Hist::reg(4, 0.0, 4.0).reg(2, 0.0, 2.0).weight();
+    h.fill_weight(0.3, 0.2, 2.0);
+    h.fill_weight(1.7, 1.9, 0.5);
+    h.fill(9.0, 1.0);
+    let json = serde_json::to_string(&h).unwrap();
+    let back: Histogram<oxihist::Weight, 2> = serde_json::from_str(&json).unwrap();
+    assert_eq!(back.fill_stats(), h.fill_stats());
+    assert_eq!(back.fill_stats().unwrap().entries, 3.0);
+    assert_eq!(
+        back.project([1]).unwrap().mean(),
+        h.project([1]).unwrap().mean()
+    );
+
+    let mut p = Hist::reg(4, 0.0, 4.0).mean();
+    p.fill_sample(0.25, 10.0);
+    let back: Histogram<Mean, 1> =
+        serde_json::from_value(serde_json::to_value(&p).unwrap()).unwrap();
+    assert_eq!(back.fill_stats(), p.fill_stats());
+    assert_eq!(back.fill_stats().unwrap().sum_ws, 10.0);
+
+    // A histogram without statistics stays without.
+    let mut bare = h.clone();
+    bare.set_fill_stats(None);
+    let v = serde_json::to_value(&bare).unwrap();
+    assert!(v["stats"].is_null());
+    let back: Histogram<oxihist::Weight, 2> = serde_json::from_value(v).unwrap();
+    assert!(back.fill_stats().is_none());
+}
+
+#[test]
+fn data_written_before_fill_statistics_still_loads() {
+    // A 1-D `Double` histogram exactly as oxihist 0.13.1 serialised it: no
+    // `stats` field.
+    let old = json!({
+        "axes": [{
+            "kind": { "Regular": { "bins": 2, "lo": 0.0, "hi": 2.0 } },
+            "name": "x", "label": "", "underflow": true, "overflow": true
+        }],
+        "bins": [0.0, 3.0, 1.0, 2.0],
+        "cap": [4],
+        "name": "old",
+        "title": ""
+    });
+    let h = load(old).unwrap();
+    assert_eq!(h.values(true), vec![0.0, 3.0, 1.0, 2.0]);
+    // No statistics came with it: they are estimated from the bins.
+    assert!(h.fill_stats().is_none());
+    assert_eq!(h.mean(), 0.75);
+    assert_eq!(h.entries(), 6.0);
+    // Filling it does not invent them.
+    let mut h = h;
+    h.fill(0.1);
+    assert!(h.fill_stats().is_none());
+    assert_eq!(h.entries(), 7.0);
+}
+
+#[test]
+fn fill_statistics_of_the_wrong_dimension_are_refused() {
+    let mut h = Hist::reg(2, 0.0, 2.0).double();
+    h.fill(0.5);
+    let good = serde_json::to_value(&h).unwrap();
+    assert!(load(good.clone()).is_ok());
+
+    let mut two_sums = good.clone();
+    two_sums["stats"]["sum_wx"] = json!([0.5, 0.5]);
+    assert!(load(two_sums).unwrap_err().contains("1 sums per axis"));
+
+    let mut wide = good.clone();
+    wide["stats"]["sum_wxy"] = json!([[0.25, 0.0]]);
+    assert!(load(wide).is_err());
+
+    let mut tall = good;
+    tall["stats"]["sum_wxy"] = json!([[0.25], [0.0]]);
+    assert!(load(tall).is_err());
 }

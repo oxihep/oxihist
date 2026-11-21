@@ -24,8 +24,14 @@
 //! - **Storages** ([`storage`]): [`Double`], [`Int64`], [`Weight`] (value and
 //!   variance), [`Mean`] and [`WeightedMean`] (profiles).
 //! - **[`Histogram<S, D>`](Histogram)** for `D` = 1, 2, 3: fills, bin access with
-//!   or without flow, adding and scaling, projections, rebinning, 1-D
-//!   statistics and sampling, and [`ThreadedHist`] for multithreaded fills.
+//!   or without flow, adding and scaling, bin-by-bin products and ratios,
+//!   projections, profiles, rebinning, slicing, smoothing, sampling, and
+//!   [`ThreadedHist`] for multithreaded fills.
+//! - **Statistics** ([`FillStats`]): each histogram keeps the number of
+//!   fills and the running sums of the weights and of the values filled, so
+//!   its mean, standard deviation and entry count are those of the data, not
+//!   of the bin centers; [`Histogram::chi2_test`] and
+//!   [`Histogram::kolmogorov_test`] compare two histograms.
 //!
 //! Features: `rayon` ([`fill_par`]), `serde`, `plot` (draw with
 //! [oxiplot](https://github.com/oxihep/oxiplot)) and `fit` (fit with
@@ -33,24 +39,28 @@
 //! [oxiroot](https://github.com/oxihep/oxiroot) converts these histograms to
 //! and from ROOT's `TH1`/`TH2`/`TH3`/`TProfile`.
 
+mod analysis;
 mod axis;
 mod builder;
 mod cast;
 mod error;
+mod fill_stats;
 mod histogram;
 mod integrations;
 mod stats;
 pub mod storage;
 mod threaded;
 
+pub use analysis::{Chi2TestKind, Chi2TestResult, KsTestResult};
 pub use axis::{Axis, AxisKind, Value};
 pub use builder::{Build1, Build2, Build3, Hist};
 pub use error::{Error, Result};
+pub use fill_stats::FillStats;
 pub use histogram::Histogram;
 pub use stats::{BinnedSampler, Random};
 pub use storage::{
-    CountStorage, Double, Int64, Mean, MeanBin, MeanStorage, Storage, Weight, WeightedMean,
-    WeightedMeanBin, WeightedSum,
+    BinSums, CountStorage, Double, Int64, Mean, MeanBin, MeanStorage, Storage, Weight,
+    WeightedMean, WeightedMeanBin, WeightedSum,
 };
 #[cfg(feature = "rayon")]
 pub use threaded::fill_par;

@@ -640,6 +640,38 @@ impl Axis {
         Some(self.flow_position(i, n))
     }
 
+    /// Whether storage position `pos` is an in-range bin (not a flow bin).
+    #[inline(always)]
+    pub(crate) fn inside(&self, pos: usize) -> bool {
+        let under = usize::from(self.underflow);
+        pos >= under && pos - under < self.size()
+    }
+
+    /// The coordinate a fill of `v` adds to the histogram's
+    /// [`FillStats`](crate::FillStats) on this axis: the value itself on a
+    /// numeric axis, the center of the bin (at storage position `pos()`) on a
+    /// category or boolean axis, and nothing on a growing category axis,
+    /// whose bins have no fixed position.
+    #[inline(always)]
+    pub(crate) fn coordinate(&self, v: Value<'_>, pos: impl FnOnce() -> usize) -> f64 {
+        match (&self.kind, v) {
+            (
+                AxisKind::Regular { .. } | AxisKind::Variable { .. } | AxisKind::Integer { .. },
+                Value::Num(x),
+            ) => x,
+            (
+                AxisKind::Regular { .. } | AxisKind::Variable { .. } | AxisKind::Integer { .. },
+                v,
+            ) => numeric(v).unwrap_or(0.0),
+            (
+                AxisKind::StrCategory { growth: true, .. }
+                | AxisKind::IntCategory { growth: true, .. },
+                _,
+            ) => 0.0,
+            _ => (pos() - usize::from(self.underflow)) as f64 + 0.5,
+        }
+    }
+
     /// The storage position of bin `i` (`-1..=n`) on an axis of `n` bins,
     /// `None` for a flow bin the axis does not keep.
     #[inline(always)]

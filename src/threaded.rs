@@ -68,7 +68,8 @@ impl<S: Storage, const D: usize> Mergeable for Histogram<S, D> {
 /// Share `&ThreadedHist` across threads and fill from any of them: each thread
 /// fills its own copy of the template (made on first use), and finding that
 /// copy takes no shared lock, so fills scale with the number of threads.
-/// [`merge`](ThreadedHist::merge) combines the copies at the end.
+/// [`merge`](ThreadedHist::merge) combines the copies at the end, their
+/// [fill statistics](Histogram::fill_stats) included.
 ///
 /// ```
 /// use oxihist::{Hist, ThreadedHist};
@@ -288,6 +289,43 @@ mod tests {
         let mut serial = Hist::reg(10, 0.0, 10.0).weight();
         serial.fill_many(data.iter().copied());
         assert_eq!(merged, serial);
+        // The data are multiples of 1/4, so the sums are exact in any order.
+        assert_eq!(merged.fill_stats(), serial.fill_stats());
+        assert_eq!(merged.entries(), 400.0);
+    }
+
+    #[test]
+    fn profiles_merge_their_statistics() {
+        let acc = ThreadedHist::new(Hist::reg(4, 0.0, 4.0).mean());
+        std::thread::scope(|s| {
+            for t in 0..4u8 {
+                let acc = &acc;
+                s.spawn(move || {
+                    for i in 0..25u8 {
+                        acc.fill_sample(f64::from(i % 4) + 0.5, f64::from(t));
+                    }
+                });
+            }
+        });
+        let merged = acc.merge().unwrap();
+        let stats = merged.fill_stats().unwrap();
+        assert_eq!((stats.entries, stats.sum_w), (100.0, 100.0));
+        assert_eq!((stats.sum_ws, stats.sum_ws2), (150.0, 350.0));
+    }
+
+    #[cfg(feature = "rayon")]
+    #[test]
+    fn fill_par_keeps_the_statistics() {
+        let data: Vec<f64> = (0..4000).map(|i| f64::from(i % 40) / 4.0).collect();
+        let template = Hist::reg(8, 0.0, 8.0).reg(8, 0.0, 8.0).weight();
+        let h = fill_par(&template, &data, |h, &x| h.fill_weight(x, 9.75 - x, 0.5));
+        let mut serial = template.clone();
+        for &x in &data {
+            serial.fill_weight(x, 9.75 - x, 0.5);
+        }
+        assert_eq!(h, serial);
+        assert_eq!(h.fill_stats(), serial.fill_stats());
+        assert_eq!(h.entries(), 4000.0);
     }
 
     /// A type from another crate, with its own error, plugs in through

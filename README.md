@@ -17,7 +17,7 @@ and [oxifit](https://github.com/oxihep/oxifit) fits them (the `fit` feature).
 
 ```toml
 [dependencies]
-oxihist = { git = "https://github.com/oxihep/oxihist", tag = "v0.13.1" }
+oxihist = { git = "https://github.com/oxihep/oxihist", tag = "v0.14.0" }
 ```
 
 ```rust
@@ -35,6 +35,10 @@ let mut m = Hist::reg(40, 0.0, 200.0).str_cat::<&str>(&[]).growth().int64();
 m.fill(91.2, "ee");
 m.fill(125.0, "mumu");
 let mass = m.project([0]).unwrap();       // sum over the channels
+
+// The mean is that of the values filled, not of the bin centers.
+assert_eq!(mass.entries(), 2.0);
+assert_eq!(mass.mean(), (91.2 + 125.0) / 2.0);
 ```
 
 ## What is in it
@@ -44,7 +48,9 @@ let mass = m.project([0]).unwrap();       // sum over the channels
 | **Axes** | `Regular`, `Variable`, `Integer`, `StrCategory`, `IntCategory` (both optionally growing), `Boolean`; under- and overflow bins on or off per axis |
 | **Storages** | `Double`, `Int64`, `Weight` (`Σw`, `Σw²`), `Mean` and `WeightedMean` (profiles) |
 | **Histograms** | `Histogram<S, D>` for 1, 2 and 3 dimensions: `fill`/`fill_weight`, `fill_sample` for profiles, bin access with index `-1` for underflow and `size` for overflow |
-| **Operations** | `add`, `scale`, `project`, `rebin`, `sum`, `reset`; 1-D `mean`, `std`, `quantiles`, `integral`, `cumulative` |
+| **Operations** | `add`, `scale`, `multiply`, `divide`, `project`, `rebin`, `sum`, `reset`, `maximum`, `minimum`; a 2-D `profile` along either axis; 1-D `quantiles`, `integral`, `cumulative`, `slice` (a value range), `interpolate`, `smooth` |
+| **Statistics** | `FillStats`: the number of fills and the running sums `Σw`, `Σw²`, `Σw·x`, `Σw·x²` and cross terms (ROOT's `fEntries` and `fTsumw*`), kept through `add`, `scale`, `project` and `rebin`, so `mean`, `std_dev`, `entries` and `effective_entries` are exact; a histogram built from bins alone estimates them from its bin centers |
+| **Comparison** | `chi2_test` (unweighted or weighted on either side) and `kolmogorov_test`, with ROOT's `Chi2Test` and `KolmogorovTest` numbers |
 | **Sampling** | a seedable `Random`, `sample`, `fill_random`, `fill_random_fn` |
 | **Threads** | `ThreadedHist` (one copy per thread, found without a shared lock, merged at the end) and `fill_par` with the `rayon` feature; both work for any `Mergeable` type, so oxiroot uses them for ROOT histograms too |
 | **Speed** | a number on a regular axis fills at ~770 M/s, as fast as oxiroot's `Hist1D`; integers, known categories (a foldhash index) and booleans skip the general growing/converting path |
@@ -93,8 +99,8 @@ release tag, as shown above.
 
 ## Not yet
 
-N-dimensional (more than 3 axes) and sparse histograms, slicing by value, and
-axis growth on numeric axes.
+N-dimensional (more than 3 axes) and sparse histograms, slicing a 2-D or 3-D
+histogram by value, and axis growth on numeric axes.
 
 ## AI assistance
 
