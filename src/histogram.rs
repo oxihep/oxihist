@@ -5,7 +5,7 @@ use std::marker::PhantomData;
 
 use crate::axis::{Axis, Locate, Value};
 use crate::error::{Error, Result};
-use crate::fill_stats::FillStats;
+use crate::fill_stats::{FillStats, Lanes};
 use crate::storage::{CountStorage, MeanStorage, Storage};
 
 /// A `D`-dimensional histogram (`D` = 1, 2 or 3) with storage `S`.
@@ -56,7 +56,7 @@ pub struct Histogram<S: Storage, const D: usize> {
     pub title: String,
     /// The exact statistics of the fills, or `None` when the bins did not
     /// all come from fills.
-    stats: Option<FillStats<D>>,
+    stats: Option<Lanes<D>>,
     #[cfg_attr(feature = "serde", serde(skip))]
     storage: PhantomData<S>,
 }
@@ -118,7 +118,7 @@ impl<S: Storage, const D: usize> TryFrom<HistogramRepr<S::Bin, D>> for Histogram
             cap: r.cap,
             name: r.name,
             title: r.title,
-            stats: r.stats,
+            stats: r.stats.map(Lanes::from),
             storage: PhantomData,
         })
     }
@@ -159,7 +159,7 @@ impl<S: Storage, const D: usize> Histogram<S, D> {
             cap,
             name: String::new(),
             title: String::new(),
-            stats: Some(FillStats::default()),
+            stats: Some(Lanes::default()),
             storage: PhantomData,
         }
     }
@@ -198,8 +198,8 @@ impl<S: Storage, const D: usize> Histogram<S, D> {
     /// reading data serialised before 0.14.
     /// [`binned_stats`](Histogram::binned_stats) estimates them in that case.
     #[must_use]
-    pub fn fill_stats(&self) -> Option<&FillStats<D>> {
-        self.stats.as_ref()
+    pub fn fill_stats(&self) -> Option<FillStats<D>> {
+        self.stats.as_ref().map(Lanes::total)
     }
 
     /// Set or clear the fill statistics: how a reader restores the sums a
@@ -209,7 +209,7 @@ impl<S: Storage, const D: usize> Histogram<S, D> {
     /// keeping them when filled, so clearing them on an empty histogram
     /// spares its fills the bookkeeping.
     pub fn set_fill_stats(&mut self, stats: Option<FillStats<D>>) {
-        self.stats = stats;
+        self.stats = stats.map(Lanes::from);
     }
 
     /// The fill statistics estimated from the bins, each in-range bin
@@ -226,7 +226,9 @@ impl<S: Storage, const D: usize> Histogram<S, D> {
             stats.entries += b.sum_w;
             if self.in_range(idx) {
                 let x: [f64; D] = std::array::from_fn(|i| centers[i][cast::unsigned(idx[i])]);
-                stats.accumulate(b.sum_w, b.sum_w2, &x, b.sum_ws, b.sum_ws2);
+                stats.accumulate(b.sum_w, b.sum_w2, &x);
+                stats.sum_ws += b.sum_ws;
+                stats.sum_ws2 += b.sum_ws2;
             }
         }
         stats
@@ -235,7 +237,7 @@ impl<S: Storage, const D: usize> Histogram<S, D> {
     /// The exact fill statistics when the histogram has them, else the
     /// estimate from its bins.
     pub(crate) fn stats(&self) -> FillStats<D> {
-        self.stats.unwrap_or_else(|| self.binned_stats())
+        self.fill_stats().unwrap_or_else(|| self.binned_stats())
     }
 
     /// The number of fills, in range or not. Without
@@ -244,8 +246,7 @@ impl<S: Storage, const D: usize> Histogram<S, D> {
     #[doc(alias = "GetEntries")]
     #[must_use]
     pub fn entries(&self) -> f64 {
-        self.stats
-            .map_or_else(|| self.binned_stats().entries, |s| s.entries)
+        self.stats().entries
     }
 
     /// The effective number of entries `(Σw)² / Σw²` over the in-range
@@ -427,7 +428,7 @@ impl<S: Storage, const D: usize> Histogram<S, D> {
     /// Empty every bin and zero the fill statistics, keeping the axes.
     pub fn reset(&mut self) {
         self.bins.fill(S::Bin::default());
-        self.stats = Some(FillStats::default());
+        self.stats = Some(Lanes::default());
     }
 
     /// Multiply every bin by `c` (see [`Storage::scale`]). The fill
@@ -536,11 +537,10 @@ impl<S: Storage, const D: usize> Histogram<S, D> {
         };
     }
 
-    /// Locate a fill on every axis, growing category axes as needed, and
-    /// return the bin's offset (`None` when it falls in a flow bin the axis
-    /// does not keep) and whether the fill is in range on every axis.
+    /// Locate a fill on every axis, growing category axes as needed: see
+    /// [`Hit`].
     #[inline(always)]
-    fn locate(&mut self, values: [Value<'_>; D]) -> Result<(Option<usize>, bool)> {
+    fn locate(&mut self, values: [Value<'_>; D]) -> Result<Hit<D>> {
         // Fast path, inlined: numbers on regular or variable axes, which
         // neither grow nor fail. Every axis is checked before a flow bin drops the fill,
         // so the general path below sees exactly what it did before.
@@ -548,21 +548,29 @@ impl<S: Storage, const D: usize> Histogram<S, D> {
         let mut off = 0;
         let mut dropped = false;
         let mut inside = true;
+        let mut x = [0.0; D];
         for i in 0..D {
             let fast = match values[i] {
-                Value::Num(x) => self.axes[i].fast_position(x),
+                Value::Num(v) => {
+                    x[i] = v;
+                    self.axes[i].fast_slot(v)
+                }
                 _ => None,
             };
-            match fast {
-                Some(Some(p)) => {
-                    off += p * strides[i];
-                    inside &= self.axes[i].inside(p);
-                }
-                Some(None) => dropped = true,
-                None => return self.locate_general(values),
+            let Some((pos, here)) = fast else {
+                return self.locate_general(values);
+            };
+            match pos {
+                Some(p) => off += p * strides[i],
+                None => dropped = true,
             }
+            inside &= here;
         }
-        Ok(((!dropped).then_some(off), inside && !dropped))
+        Ok(Hit {
+            off: (!dropped).then_some(off),
+            inside,
+            x,
+        })
     }
 
     /// [`locate`](Histogram::locate) for every other axis kind and value.
@@ -570,34 +578,43 @@ impl<S: Storage, const D: usize> Histogram<S, D> {
     /// booleans, numbers), which neither grow nor fail; only a new category,
     /// a converted value or a mismatch reaches the fully general code.
     #[inline(never)]
-    fn locate_general(&mut self, values: [Value<'_>; D]) -> Result<(Option<usize>, bool)> {
+    fn locate_general(&mut self, values: [Value<'_>; D]) -> Result<Hit<D>> {
         let strides = self.strides();
         let mut off = 0;
         let mut dropped = false;
         let mut inside = true;
+        let mut x = [0.0; D];
         for i in 0..D {
+            let axis = &self.axes[i];
             let fast = match values[i] {
-                Value::Num(x) => self.axes[i]
-                    .fast_position(x)
-                    .or_else(|| self.axes[i].other_position(values[i])),
-                v => self.axes[i].other_position(v),
+                Value::Num(v) => axis.fast_slot(v).or_else(|| axis.other_slot(values[i])),
+                v => axis.other_slot(v),
             };
-            match fast {
-                Some(Some(p)) => {
+            let Some((pos, here)) = fast else {
+                return self.locate_slow(values);
+            };
+            match pos {
+                Some(p) => {
                     off += p * strides[i];
-                    inside &= self.axes[i].inside(p);
+                    if here {
+                        x[i] = axis.coordinate(values[i], p - usize::from(axis.underflow()));
+                    }
                 }
-                Some(None) => dropped = true,
-                None => return self.locate_slow(values),
+                None => dropped = true,
             }
+            inside &= here;
         }
-        Ok(((!dropped).then_some(off), inside && !dropped))
+        Ok(Hit {
+            off: (!dropped).then_some(off),
+            inside,
+            x,
+        })
     }
 
     /// [`locate`](Histogram::locate) for every axis kind and value, growing
     /// category axes as needed.
     #[inline(never)]
-    fn locate_slow(&mut self, values: [Value<'_>; D]) -> Result<(Option<usize>, bool)> {
+    fn locate_slow(&mut self, values: [Value<'_>; D]) -> Result<Hit<D>> {
         let mut idx = [0isize; D];
         for i in 0..D {
             idx[i] = match self.axes[i].locate(values[i], i)? {
@@ -608,7 +625,18 @@ impl<S: Storage, const D: usize> Histogram<S, D> {
                 }
             };
         }
-        Ok((self.offset(idx), self.in_range(idx)))
+        let inside = self.in_range(idx);
+        let mut x = [0.0; D];
+        if inside {
+            for i in 0..D {
+                x[i] = self.axes[i].coordinate(values[i], cast::unsigned(idx[i]));
+            }
+        }
+        Ok(Hit {
+            off: self.offset(idx),
+            inside,
+            x,
+        })
     }
 
     /// Add a category to axis `i` (a growing category axis, which has no flow
@@ -653,30 +681,29 @@ impl<S: Storage, const D: usize> Histogram<S, D> {
         s: f64,
         f: impl FnOnce(&mut S::Bin),
     ) -> Result<()> {
-        let (off, inside) = self.locate(values)?;
-        if let Some(o) = off {
+        let hit = self.locate(values)?;
+        if let Some(o) = hit.off {
             f(&mut self.bins[o]);
-            if inside && self.stats.is_some() {
-                self.record(values, o, w, s);
+        }
+        if let Some(stats) = &mut self.stats {
+            // The bin picks the lane: see `Lanes`.
+            let lane = stats.lane(hit.off.unwrap_or(0));
+            lane.entries += 1.0;
+            // A fill out of range adds zeros, not a branch: its own values
+            // may be NaN or infinite and must not reach the sums.
+            let (w, s, x) = if hit.inside {
+                (w, s, hit.x)
+            } else {
+                (0.0, 0.0, [0.0; D])
+            };
+            lane.accumulate(w, w * w, &x);
+            // Only a profile has sample sums; a count's stay 0.
+            if S::SAMPLED {
+                lane.sum_ws += w * s;
+                lane.sum_ws2 += w * s * s;
             }
         }
-        if let Some(stats) = &mut self.stats {
-            stats.entries += 1.0;
-        }
         Ok(())
-    }
-
-    /// Add an in-range fill, landing at storage offset `off`, to the fill
-    /// statistics' weighted sums.
-    #[inline(always)]
-    fn record(&mut self, values: [Value<'_>; D], off: usize, w: f64, s: f64) {
-        let strides = self.strides();
-        let x: [f64; D] = std::array::from_fn(|i| {
-            self.axes[i].coordinate(values[i], || (off / strides[i]) % self.cap[i])
-        });
-        if let Some(stats) = &mut self.stats {
-            stats.accumulate(w, w * w, &x, w * s, w * s * s);
-        }
     }
 
     /// Sum over every axis not in `keep`, giving an `E`-dimensional histogram
@@ -1048,6 +1075,18 @@ impl<S: Storage> Histogram<S, 2> {
     }
 }
 
+/// Where a fill lands.
+struct Hit<const D: usize> {
+    /// The bin's storage offset; `None` when the fill falls in a flow bin an
+    /// axis does not keep.
+    off: Option<usize>,
+    /// Whether the fill is in range on every axis.
+    inside: bool,
+    /// The coordinate the fill adds to the fill statistics on each axis (see
+    /// [`FillStats`]); only meaningful when `inside`.
+    x: [f64; D],
+}
+
 /// The panic of a `fill` whose value does not fit an axis, kept out of the
 /// fill so the fast path stays small.
 #[cold]
@@ -1214,7 +1253,7 @@ mod tests {
         p.fill_sample_weight(0.5, 10.0, 2.0);
         p.fill_sample(1.25, 5.0);
         p.fill_sample(7.0, 3.0); // overflow
-        let s = *p.fill_stats().unwrap();
+        let s = p.fill_stats().unwrap();
         assert_eq!(
             (s.entries, s.sum_w, s.sum_w2, s.sum_wx, s.sum_wxy),
             (3.0, 3.0, 5.0, [2.25], [[2.0625]])
@@ -1270,10 +1309,57 @@ mod tests {
         assert!(h.try_fill("x").is_err()); // not a fill at all
         let s = h.fill_stats().unwrap();
         assert_eq!((s.entries, s.sum_w, s.sum_wx), (4.0, 1.0, [0.25]));
+        // What an out-of-range fill carries never reaches the sums.
+        let mut d = Hist::reg(2, 0.0, 2.0).double();
+        d.fill(0.25);
+        d.fill_weight(5.0, f64::INFINITY);
+        d.fill_weight(f64::NAN, f64::NAN);
+        let s = d.fill_stats().unwrap();
+        assert_eq!(
+            (s.entries, s.sum_w, s.sum_w2, s.sum_wx),
+            (3.0, 1.0, 1.0, [0.25])
+        );
+        let mut p = Hist::reg(2, 0.0, 2.0).mean();
+        p.fill_sample(0.5, 3.0);
+        p.fill_sample(9.0, f64::NAN);
+        let t = p.fill_stats().unwrap();
+        assert_eq!(
+            (t.entries, t.sum_w, t.sum_ws, t.sum_ws2),
+            (2.0, 1.0, 3.0, 9.0)
+        );
         // The statistics take the weight as given; an integer bin rounds it.
         h.fill_weight(1.5, 0.25);
         assert_eq!(h.fill_stats().unwrap().sum_w, 1.25);
         assert_eq!(h.value([1]), Some(0.0));
+    }
+
+    #[test]
+    fn many_fills_in_many_bins_total_exactly() {
+        // The sums are kept in lanes picked by the bin; the record is their
+        // total, whichever bins the fills went to.
+        let mut h = Hist::reg(16, 0.0, 16.0).reg(3, 0.0, 3.0).double();
+        let (mut n, mut sx, mut sy, mut sxy) = (0.0, 0.0, 0.0, 0.0);
+        for i in 0..200u32 {
+            let (x, y) = (f64::from(i % 17), f64::from(i % 4) * 0.75);
+            h.fill(x, y);
+            if x < 16.0 {
+                n += 1.0;
+                sx += x;
+                sy += y;
+                sxy += x * y;
+            }
+        }
+        let s = h.fill_stats().unwrap();
+        assert_eq!((s.entries, s.sum_w, s.sum_w2), (200.0, n, n));
+        assert_eq!(
+            (s.sum_wx, s.sum_wxy[0][1], s.sum_wxy[1][0]),
+            ([sx, sy], sxy, sxy)
+        );
+        // Setting them back is the identity, however they were spread.
+        let mut again = h.clone();
+        again.set_fill_stats(h.fill_stats());
+        assert_eq!(again.fill_stats(), h.fill_stats());
+        assert!(format!("{h:?}").contains("stats: Some(FillStats {"));
     }
 
     #[test]
@@ -1327,7 +1413,7 @@ mod tests {
         assert_eq!(rebuilt.effective_entries(), 1.6);
 
         // A reader restores what the file stored.
-        rebuilt.set_fill_stats(h.fill_stats().copied());
+        rebuilt.set_fill_stats(h.fill_stats());
         assert_eq!(rebuilt.fill_stats(), h.fill_stats());
         assert_eq!(rebuilt.mean(), 0.8125);
 
@@ -1339,7 +1425,7 @@ mod tests {
         assert!(h.fill_stats().is_none());
         // Emptying the histogram makes them exact again.
         h.reset();
-        assert_eq!(h.fill_stats(), Some(&crate::FillStats::default()));
+        assert_eq!(h.fill_stats(), Some(crate::FillStats::default()));
         assert!(h.mean().is_nan() && h.std_dev().is_nan());
     }
 
@@ -1351,7 +1437,7 @@ mod tests {
         }
         // x values 0.5, 0.5, 1.5, 2.5: all at bin centers.
         let var = (0.25 + 0.25 + 2.25 + 6.25) / 4.0 - 1.25f64.powi(2);
-        let exact = *p.fill_stats().unwrap();
+        let exact = p.fill_stats().unwrap();
         assert_eq!(p.mean(), 1.25);
         assert!(close(p.std_dev(), var.sqrt()));
         assert_eq!((exact.sum_ws, exact.sum_ws2), (65.0, 1425.0));
@@ -1395,10 +1481,10 @@ mod tests {
         assert!(c.fill_stats().is_none());
 
         // scale: Σw and the moments by c, Σw² by c², the entries unchanged.
-        let s = *whole.fill_stats().unwrap();
+        let s = whole.fill_stats().unwrap();
         let mut scaled = whole.clone();
         scaled.scale(-2.0);
-        let t = *scaled.fill_stats().unwrap();
+        let t = scaled.fill_stats().unwrap();
         assert_eq!(
             (t.entries, t.sum_w, t.sum_w2),
             (s.entries, -2.0 * s.sum_w, 4.0 * s.sum_w2)
@@ -1437,7 +1523,7 @@ mod tests {
         // reset: zero.
         let mut r = whole.clone();
         r.reset();
-        assert_eq!(r.fill_stats(), Some(&crate::FillStats::default()));
+        assert_eq!(r.fill_stats(), Some(crate::FillStats::default()));
         assert_eq!(r.entries(), 0.0);
     }
 

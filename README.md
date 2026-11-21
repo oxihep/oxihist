@@ -53,7 +53,7 @@ assert_eq!(mass.mean(), (91.2 + 125.0) / 2.0);
 | **Comparison** | `chi2_test` (unweighted or weighted on either side) and `kolmogorov_test`, with ROOT's `Chi2Test` and `KolmogorovTest` numbers |
 | **Sampling** | a seedable `Random`, `sample`, `fill_random`, `fill_random_fn` |
 | **Threads** | `ThreadedHist` (one copy per thread, found without a shared lock, merged at the end) and `fill_par` with the `rayon` feature; both work for any `Mergeable` type, so oxiroot uses them for ROOT histograms too |
-| **Speed** | a number on a regular axis fills at ~770 M/s, as fast as oxiroot's `Hist1D`; integers, known categories (a foldhash index) and booleans skip the general growing/converting path |
+| **Speed** | with the fill statistics kept, a number on a regular axis fills at ~475 M/s (1-D) and ~220 M/s (2-D), a profile at ~320 M/s and a string category at ~105 M/s; integers, known categories (a foldhash index) and booleans skip the general growing/converting path |
 
 Bins are numbered boost-histogram's way: `0..size` in range, `-1` for the
 underflow and `size` for the overflow bin.

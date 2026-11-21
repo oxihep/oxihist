@@ -102,7 +102,7 @@ proptest! {
         let h = filled(&xs);
         let want = stats_of(&xs);
         let got = h.fill_stats().unwrap();
-        prop_assert!(stats_close(got, &want), "{got:?} != {want:?}");
+        prop_assert!(stats_close(&got, &want), "{got:?} != {want:?}");
         prop_assert_eq!(got.sum_wxy[0][1], got.sum_wxy[1][0]);
         prop_assert_eq!(h.entries(), xs.len() as f64);
         // The bins agree with the fills on the weights, not on where they
@@ -119,11 +119,11 @@ proptest! {
     ) {
         let cut = cut.min(xs.len());
         let whole = filled(&xs);
-        let stats = *whole.fill_stats().unwrap();
+        let stats = whole.fill_stats().unwrap();
 
         let mut a = filled(&xs[..cut]);
         a.add(&filled(&xs[cut..])).unwrap();
-        prop_assert!(stats_close(a.fill_stats().unwrap(), &stats));
+        prop_assert!(stats_close(&a.fill_stats().unwrap(), &stats));
 
         let mut scaled = whole.clone();
         scaled.scale(c);
@@ -149,7 +149,7 @@ proptest! {
 
         let mut emptied = whole.clone();
         emptied.reset();
-        prop_assert_eq!(emptied.fill_stats(), Some(&FillStats::default()));
+        prop_assert_eq!(emptied.fill_stats(), Some(FillStats::default()));
     }
 
     /// Without fill statistics the mean is that of the bin centers, which is
@@ -165,7 +165,7 @@ proptest! {
         prop_assert!(rebuilt.fill_stats().is_none());
         prop_assert!((rebuilt.mean() - exact).abs() <= 0.25 + 1e-9);
         prop_assert_eq!(rebuilt.entries(), h.entries());
-        rebuilt.set_fill_stats(h.fill_stats().copied());
+        rebuilt.set_fill_stats(h.fill_stats());
         prop_assert_eq!(rebuilt.mean(), h.mean());
     }
 

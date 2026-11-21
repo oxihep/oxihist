@@ -115,10 +115,9 @@ impl<const D: usize> FillStats<D> {
     }
 
     /// Add an in-range contribution at `x`: `w` and `w2` to the weight sums,
-    /// `w` times the coordinates to the moments, `ws` and `ws2` to the
-    /// sample sums.
+    /// and `w` times the coordinates to the moments.
     #[inline(always)]
-    pub(crate) fn accumulate(&mut self, w: f64, w2: f64, x: &[f64; D], ws: f64, ws2: f64) {
+    pub(crate) fn accumulate(&mut self, w: f64, w2: f64, x: &[f64; D]) {
         self.sum_w += w;
         self.sum_w2 += w2;
         for i in 0..D {
@@ -134,8 +133,6 @@ impl<const D: usize> FillStats<D> {
                 }
             }
         }
-        self.sum_ws += ws;
-        self.sum_ws2 += ws2;
     }
 
     /// Add `other`'s sums, as if this record had also seen every fill
@@ -186,6 +183,87 @@ impl<const D: usize> FillStats<D> {
             sum_ws: self.sum_ws,
             sum_ws2: self.sum_ws2,
         }
+    }
+}
+
+/// How many lanes a histogram spreads its running sums over.
+const LANES: usize = 4;
+
+/// A histogram's running sums while it is being filled: [`LANES`] partial
+/// [`FillStats`], whose total is the record.
+///
+/// One set of sums would make every fill wait for the one before it: each
+/// adds to the same few numbers, and an addition cannot start until the last
+/// one's result is stored. A fill therefore adds to the lane its bin picks,
+/// so consecutive fills in different bins usually touch different sums, as
+/// they touch different bins.
+#[derive(Clone, Copy)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(into = "FillStats<D>"))]
+pub(crate) struct Lanes<const D: usize>([Lane<D>; LANES]);
+
+/// One lane, on its own cache line so that its address is a shift away.
+#[derive(Clone, Copy, Default)]
+#[repr(align(64))]
+struct Lane<const D: usize>(FillStats<D>);
+
+impl<const D: usize> std::fmt::Debug for Lanes<D> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.total().fmt(f)
+    }
+}
+
+impl<const D: usize> Default for Lanes<D> {
+    fn default() -> Self {
+        Lanes([Lane::default(); LANES])
+    }
+}
+
+impl<const D: usize> From<FillStats<D>> for Lanes<D> {
+    fn from(total: FillStats<D>) -> Self {
+        let mut lanes = Lanes::default();
+        lanes.0[0].0 = total;
+        lanes
+    }
+}
+
+impl<const D: usize> From<Lanes<D>> for FillStats<D> {
+    fn from(lanes: Lanes<D>) -> Self {
+        lanes.total()
+    }
+}
+
+impl<const D: usize> Lanes<D> {
+    /// The record: the lanes summed, in order.
+    pub(crate) fn total(&self) -> FillStats<D> {
+        let mut total = self.0[0].0;
+        for lane in &self.0[1..] {
+            total.add(&lane.0);
+        }
+        total
+    }
+
+    /// The partial sums a fill landing at storage offset `off` adds to.
+    #[inline(always)]
+    pub(crate) fn lane(&mut self, off: usize) -> &mut FillStats<D> {
+        &mut self.0[off % LANES].0
+    }
+
+    /// Add `other`'s sums, lane by lane.
+    pub(crate) fn add(&mut self, other: &Self) {
+        for (a, b) in self.0.iter_mut().zip(&other.0) {
+            a.0.add(&b.0);
+        }
+    }
+
+    /// See [`FillStats::scale`].
+    pub(crate) fn scale(&mut self, c: f64, sampled: bool) {
+        self.0.iter_mut().for_each(|lane| lane.0.scale(c, sampled));
+    }
+
+    /// See [`FillStats::project`].
+    pub(crate) fn project<const E: usize>(&self, keep: [usize; E]) -> Lanes<E> {
+        Lanes(self.0.map(|lane| Lane(lane.0.project(keep))))
     }
 }
 
@@ -255,8 +333,8 @@ mod tests {
     #[test]
     fn moments_and_cross_terms_accumulate() {
         let mut s = FillStats::<2>::default();
-        s.accumulate(2.0, 4.0, &[1.0, 3.0], 0.0, 0.0);
-        s.accumulate(1.0, 1.0, &[4.0, 0.5], 0.0, 0.0);
+        s.accumulate(2.0, 4.0, &[1.0, 3.0]);
+        s.accumulate(1.0, 1.0, &[4.0, 0.5]);
         assert_eq!((s.sum_w, s.sum_w2), (3.0, 5.0));
         assert_eq!(s.sum_wx, [6.0, 6.5]);
         assert_eq!(s.sum_wxy, [[18.0, 8.0], [8.0, 18.25]]);
@@ -280,7 +358,8 @@ mod tests {
     #[test]
     fn scaling_weights_or_samples() {
         let mut s = FillStats::<1>::default();
-        s.accumulate(2.0, 4.0, &[3.0], 10.0, 50.0);
+        s.accumulate(2.0, 4.0, &[3.0]);
+        (s.sum_ws, s.sum_ws2) = (10.0, 50.0);
         let mut counts = s;
         counts.scale(-2.0, false);
         assert_eq!((counts.sum_w, counts.sum_w2), (-4.0, 16.0));

@@ -86,9 +86,25 @@ Breaking; see **Changed**.
 - **`CountStorage` has a new required method, `bin`**, for storages
   implemented outside this crate.
 - **Fills cost more**: each one also updates the running sums, as in ROOT.
-  A number on a regular axis filled about a quarter slower in a tight loop
-  here (1-D and 2-D). `set_fill_stats(None)` on the empty histogram turns
-  the bookkeeping off for a fill that does not need it.
+  Measured with oxiroot's `fill` benchmark (a million values, Apple
+  silicon), against 0.13.1:
+
+  | Fill | 0.13.1 | 0.14.0 |
+  | --- | --- | --- |
+  | 1-D regular, `Double` | 750–800 M/s | 475 M/s |
+  | 1-D regular, `Weight` | 680–705 M/s | 460 M/s |
+  | 2-D regular, `Double` | 255–265 M/s | 223 M/s |
+  | 1-D profile, `Mean` | 443–453 M/s | 318 M/s |
+  | string category, 20 categories | 124–132 M/s | 106 M/s |
+
+  Two things keep it to that. The fast path finds the bin, whether the
+  fill is in range and its coordinate in one pass over the axis, instead
+  of matching on the axis kind again for each. And the sums are kept in
+  four partial sets, the bin choosing which, so that consecutive fills in
+  different bins do not wait on each other's additions; `fill_stats`
+  returns their total. This costs 256 bytes per 1-D histogram, 512 per
+  2-D and 768 per 3-D. `set_fill_stats(None)` on the empty histogram
+  turns the bookkeeping off for a fill that does not need it.
 - **oxistats 0.2.0** is a dependency (the chi-square and Kolmogorov
   probabilities), at the tag oxifit and oxiroot name.
 
