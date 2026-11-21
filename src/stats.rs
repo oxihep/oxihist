@@ -1,4 +1,5 @@
-//! Statistics of 1-D histograms, and drawing random values from them.
+//! Statistics of 1-D histograms (mean, standard deviation, quantiles,
+//! cumulative), and drawing random values from them.
 
 use crate::axis::Axis;
 use crate::cast;
@@ -133,43 +134,37 @@ fn sample_cdf(cdf: &[f64], edges: &[f64], r: f64) -> f64 {
     }
 }
 
-/// Statistics over the in-range bins of a 1-D histogram, treating each bin as
+/// Statistics of a 1-D histogram. The mean and standard deviation are exact
+/// when the histogram has [fill statistics](Histogram::fill_stats);
+/// otherwise, like everything else here, they treat each in-range bin as
 /// concentrated at its center. On a categorical axis the centers are the bin
 /// positions `0.5, 1.5, …`.
 impl<S: Storage> Histogram<S, 1> {
-    fn centers_values(&self) -> (Vec<f64>, Vec<f64>) {
-        (self.axis(0).centers(), self.values(false))
-    }
-
     /// The sum of the in-range values (`flow = true` adds the flow bins).
     #[must_use]
     pub fn integral(&self, flow: bool) -> f64 {
         self.values(flow).iter().sum()
     }
 
-    /// The value-weighted mean of the bin centers (`NaN` for an empty
-    /// histogram).
+    /// The weighted mean of the values filled in range, `Σw·x / Σw` (`NaN`
+    /// for an empty histogram). Without
+    /// [fill statistics](Histogram::fill_stats) it is estimated from the bin
+    /// centers, each weighted by its bin's `Σw` (the value of a count, the
+    /// number of samples of a profile).
+    #[doc(alias = "GetMean")]
     #[must_use]
     pub fn mean(&self) -> f64 {
-        let (c, v) = self.centers_values();
-        let sw: f64 = v.iter().sum();
-        c.iter().zip(&v).map(|(c, w)| c * w).sum::<f64>() / sw
+        self.stats().mean(0)
     }
 
-    /// The value-weighted standard deviation of the bin centers (population
-    /// form; `NaN` for an empty histogram).
+    /// The weighted standard deviation of the values filled in range
+    /// (population form; `NaN` for an empty histogram), estimated from the
+    /// bin centers like [`mean`](Histogram::mean) without
+    /// [fill statistics](Histogram::fill_stats).
+    #[doc(alias = "GetStdDev", alias = "GetRMS")]
     #[must_use]
     pub fn std_dev(&self) -> f64 {
-        let (c, v) = self.centers_values();
-        let sw: f64 = v.iter().sum();
-        let m = c.iter().zip(&v).map(|(c, w)| c * w).sum::<f64>() / sw;
-        let var = c
-            .iter()
-            .zip(&v)
-            .map(|(c, w)| w * (c - m) * (c - m))
-            .sum::<f64>()
-            / sw;
-        var.max(0.0).sqrt()
+        self.stats().std_dev(0)
     }
 
     /// The `x` where the cumulative distribution of the in-range values reaches
@@ -209,7 +204,8 @@ impl<S: Storage> Histogram<S, 1> {
     }
 
     /// The running sum of the in-range values, from the left (`forward`) or the
-    /// right, as a histogram on the same axis; flow bins are left empty.
+    /// right, as a histogram on the same axis; flow bins are left empty. The
+    /// result has no [fill statistics](Histogram::fill_stats).
     #[must_use]
     pub fn cumulative(&self, forward: bool) -> Self {
         let mut out = Histogram::new([self.axis(0).clone()]);
@@ -226,6 +222,7 @@ impl<S: Storage> Histogram<S, 1> {
             S::merge(&mut acc, self.bin([i]).expect("in range"));
             *out.bin_mut([i]).expect("in range") = acc.clone();
         }
+        out.set_fill_stats(None);
         out
     }
 
@@ -286,6 +283,37 @@ mod tests {
         assert_eq!(h.integral(true), 5.0);
         assert!((h.mean() - 1.5).abs() < 1e-12);
         assert!((h.std_dev() - 0.5f64.sqrt()).abs() < 1e-12);
+    }
+
+    #[test]
+    fn mean_and_std_dev_are_those_of_the_fills() {
+        // oxiroot's reference: contents [2, 1, 3, 0], mean 10/6.
+        let mut h = Hist::reg(4, 0.0, 4.0).double();
+        h.fill_many([0.5, 0.5, 1.5, 2.5, 2.5, 2.5]);
+        assert_eq!(h.values(false), vec![2.0, 1.0, 3.0, 0.0]);
+        assert!((h.mean() - 10.0 / 6.0).abs() < 1e-12);
+        let var = 21.5 / 6.0 - (10.0 / 6.0f64).powi(2);
+        assert!((h.std_dev() - var.sqrt()).abs() < 1e-12);
+        assert!((h.effective_entries() - 6.0).abs() < 1e-12);
+
+        // Off the bin centers, the fills and the bins disagree.
+        let mut off = Hist::reg(2, 0.0, 2.0).double();
+        off.fill_many([0.0, 0.25, 1.0]);
+        assert!((off.mean() - 1.25 / 3.0).abs() < 1e-12);
+        let var = (0.0625 + 1.0) / 3.0 - (1.25 / 3.0f64).powi(2);
+        assert!((off.std_dev() - var.sqrt()).abs() < 1e-12);
+        off.set_fill_stats(None);
+        assert!((off.mean() - 2.5 / 3.0).abs() < 1e-12);
+
+        // Drawing fills goes through `fill`, so the statistics are exact.
+        let mut drawn = Hist::reg(10, 0.0, 1.0).double();
+        drawn.fill_random_fn(|x| x, 500, &mut Random::seed(3));
+        let s = drawn.fill_stats().unwrap();
+        assert_eq!((s.entries, s.sum_w), (500.0, 500.0));
+        assert!((drawn.mean() - drawn.binned_stats().mean(0)).abs() < 0.05);
+        assert_ne!(drawn.mean(), drawn.binned_stats().mean(0));
+        // A cumulative is built from bins.
+        assert!(drawn.cumulative(true).fill_stats().is_none());
     }
 
     #[test]

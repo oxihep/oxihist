@@ -583,29 +583,29 @@ impl Axis {
         self.locate_general(v, axis)
     }
 
-    /// The storage position of `v` (`Some(None)` for a flow bin the axis
-    /// does not keep), for the values each axis kind takes natively: a number
-    /// on a regular or variable axis, an integer (or number) on an integer
-    /// axis, a string or integer on a category axis, a boolean on a boolean
-    /// axis. `None` for anything else, including a category a growing axis
-    /// does not have yet: the general path handles those. The fill's fast
-    /// path.
+    /// The storage position of the number `x` on a regular or variable axis
+    /// (`None` for a flow bin the axis does not keep), with whether it is in
+    /// range: one pass over the axis kind, so the fill does not match on it
+    /// again to find out. `None` for any other axis: the general path
+    /// handles those. The fill's fast path.
     #[inline(always)]
-    pub(crate) fn fast_position(&self, x: f64) -> Option<Option<usize>> {
+    pub(crate) fn fast_slot(&self, x: f64) -> Option<(Option<usize>, bool)> {
         let (i, n) = match &self.kind {
             AxisKind::Regular { bins, lo, hi } => (regular_index(x, *bins, *lo, *hi), *bins),
             AxisKind::Variable { edges } => (variable_index(x, edges), edges.len() - 1),
             _ => return None,
         };
-        Some(self.flow_position(i, n))
+        Some((self.flow_position(i, n), i >= 0 && cast::unsigned(i) < n))
     }
 
     /// The fast path for integer, category and boolean axes: the storage
-    /// position of their native values, like
-    /// [`fast_position`](Axis::fast_position), and `None` for anything the
-    /// general path must handle (a new category on a growing axis, …).
+    /// position of their native values (an integer or number on an integer
+    /// axis, a string or integer on a category axis, a boolean on a boolean
+    /// axis) and whether it is in range, like
+    /// [`fast_slot`](Axis::fast_slot). `None` for anything the general path
+    /// must handle (a new category on a growing axis, …).
     #[inline]
-    pub(crate) fn other_position(&self, v: Value<'_>) -> Option<Option<usize>> {
+    pub(crate) fn other_slot(&self, v: Value<'_>) -> Option<(Option<usize>, bool)> {
         let (i, n): (isize, usize) = match (&self.kind, v) {
             (AxisKind::Integer { lo, hi }, Value::Int(k)) => {
                 (integer_index(k, *lo, *hi), cast::span(hi - lo))
@@ -637,7 +637,23 @@ impl Axis {
             (AxisKind::Boolean, Value::Bool(b)) => (isize::from(b), 2),
             _ => return None,
         };
-        Some(self.flow_position(i, n))
+        Some((self.flow_position(i, n), i >= 0 && cast::unsigned(i) < n))
+    }
+
+    /// The coordinate a fill of `v` landing in in-range bin `bin` adds to the
+    /// histogram's [`FillStats`](crate::FillStats) on this axis: the value
+    /// itself on a numeric axis, the center of the bin on a category or
+    /// boolean axis, and nothing on a growing category axis, whose bins have
+    /// no fixed position.
+    pub(crate) fn coordinate(&self, v: Value<'_>, bin: usize) -> f64 {
+        match &self.kind {
+            AxisKind::Regular { .. } | AxisKind::Variable { .. } | AxisKind::Integer { .. } => {
+                numeric(v).unwrap_or(0.0)
+            }
+            AxisKind::StrCategory { growth: true, .. }
+            | AxisKind::IntCategory { growth: true, .. } => 0.0,
+            _ => bin as f64 + 0.5,
+        }
     }
 
     /// The storage position of bin `i` (`-1..=n`) on an axis of `n` bins,
@@ -913,16 +929,18 @@ mod tests {
             for &v in &values {
                 // The fill's dispatch (see `Histogram::locate`).
                 let fast = match v {
-                    Value::Num(x) => axis.fast_position(x).or_else(|| axis.other_position(v)),
-                    _ => axis.other_position(v),
+                    Value::Num(x) => axis.fast_slot(x).or_else(|| axis.other_slot(v)),
+                    _ => axis.other_slot(v),
                 };
-                let Some(fast) = fast else {
+                let Some((fast, inside)) = fast else {
                     continue;
                 };
                 checked += 1;
                 match axis.locate_general(v, 0) {
                     Ok(Locate::Index(i)) => {
-                        assert_eq!(fast, axis.position(i), "{:?} with {v:?}", axis.kind)
+                        assert_eq!(fast, axis.position(i), "{:?} with {v:?}", axis.kind);
+                        let in_range = i >= 0 && cast::unsigned(i) < axis.size();
+                        assert_eq!(inside, in_range, "{:?} with {v:?}", axis.kind);
                     }
                     other => panic!(
                         "{:?} with {v:?}: fast path {fast:?}, general path {}",

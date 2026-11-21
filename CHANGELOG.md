@@ -6,6 +6,108 @@ Notable changes to oxihist, by release. The format follows
 
 ## [Unreleased]
 
+## [0.14.0]
+
+Exact fill statistics and the analysis methods oxiroot's ROOT histograms
+had and these lacked, so that `Histogram<S, D>` can be the one histogram
+type and oxiroot's `Hist1D`/`Hist2D`/`Hist3D`/`Profile*` plain I/O records.
+Breaking; see **Changed**.
+
+### Added
+
+- **`FillStats<D>`**: what a histogram was filled with, as running sums
+  (ROOT's `fEntries` and `fTsumw*`). `entries` counts every fill; `sum_w`,
+  `sum_w2`, `sum_wx[i]` and `sum_wxy[i][j]` (`Σw·xᵢ·xⱼ`: the diagonal is
+  `Σw·xᵢ²`, the rest the cross terms) count the fills in range on every
+  axis; `sum_ws` and `sum_ws2` are a profile's sums of the sampled value.
+  `FillStats::mean`, `std_dev` and `effective_entries` read them. Every fill
+  path accumulates them: `fill*`, `try_fill*`, `fill_many`, `fill_sample*`,
+  `fill_random*`, `ThreadedHist` and `fill_par`.
+  - The coordinate of a fill is the value filled on a regular, variable or
+    integer axis, and the bin's center (`0.5`, `1.5`, …) on a category or
+    boolean axis. A growing category axis adds nothing: its bins have no
+    fixed position, which is what lets two copies that met the categories in
+    different orders be added.
+  - `add` sums them, `scale` scales them (`Σw` and the moments by `c`, `Σw²`
+    by `c²`; a profile's sample sums instead), `reset` zeroes them,
+    `project` keeps the kept axes' terms and `rebin` leaves them alone.
+  - A histogram whose bins did not all come from fills has none:
+    `Histogram::fill_stats` returns `None` after `from_bins`, `bin_mut`,
+    `multiply`, `divide`, `smooth`, `slice` and `cumulative`, after adding a
+    histogram that has none, and for data serialised by 0.13.
+    `Histogram::set_fill_stats` restores them (a ROOT reader, from the
+    file's sums), and `Histogram::binned_stats` is the estimate from the
+    bin centers that takes their place.
+- **`Histogram::entries`** and **`effective_entries`** (`(Σw)² / Σw²`), exact
+  with fill statistics and estimated from the bins without.
+- **`Histogram::multiply`** and **`divide`**: bin by bin, flow bins
+  included, by a histogram of any storage, with the variances propagated as
+  for independent values. A zero denominator gives an empty bin.
+- **`Histogram::maximum`** and **`minimum`**: the in-range bin with the
+  largest or smallest value, as `Some((index, value))`.
+- **`Histogram::chi2_test(other, kind)`** and **`kolmogorov_test(other)`**
+  for 1-D count histograms, returning `Chi2TestResult` and `KsTestResult`.
+  `Chi2TestKind` chooses ROOT's `"UU"`, `"UW"` or `"WW"` test. The numbers
+  are ROOT's `Chi2Test` and `KolmogorovTest`.
+- **`Histogram::smooth(times)`**: ROOT's 353QH-twice smoother
+  (`TH1::Smooth`) for 1-D counts.
+- **`Histogram::interpolate(x)`**: linear between bin centers
+  (`TH1::Interpolate`); `None` outside the axis.
+- **`Histogram::slice(lo..hi)`**: the bins of a 1-D histogram overlapping a
+  value range, on an axis cut down to them; what is cut off goes to the flow
+  bins.
+- **`Histogram::profile(axis)`**: a 2-D count histogram's profile along one
+  axis (`ProfileX`, `ProfileY`) as a 1-D `WeightedMean` histogram.
+- **`Storage::sums`** and **`BinSums`** (what a bin adds to the statistics
+  estimated from bins), **`Storage::SAMPLED`** (whether a bin holds samples
+  of a value) and **`CountStorage::bin`** (a bin from a value and a
+  variance).
+
+### Changed
+
+- **`mean` and `std_dev` are those of the values filled**, not of the bin
+  centers, whenever the histogram has fill statistics. A histogram without
+  them is estimated from its bin centers as before, with two differences:
+  a profile's bins are weighted by their number of samples instead of their
+  mean, and `std_dev` of an empty histogram is `NaN`, as documented, not 0.
+- **Equality does not compare the fill statistics.** Two histograms are
+  equal when their axes, name, title and bins are, as before. The sums
+  depend on the order of the fills in the last bit, so two threads'
+  histograms merged would no longer equal a serial fill, which they do bin
+  for bin with integer counts; and a histogram rebuilt from its bins, which
+  has no statistics, would not equal the one it was rebuilt from. Compare
+  `fill_stats()` as well where the sums matter; `set_fill_stats` lets a
+  round trip through a file restore them exactly.
+- **`bin_mut` drops the fill statistics**: a bin edited by hand is not a
+  fill.
+- **serde**: a histogram serialises a `stats` field (`null` without fill
+  statistics). Data written by 0.13 has no such field and still loads, with
+  no fill statistics. The bins' layout is unchanged.
+- **`CountStorage` has a new required method, `bin`**, for storages
+  implemented outside this crate.
+- **Fills cost more**: each one also updates the running sums, as in ROOT.
+  Measured with oxiroot's `fill` benchmark (a million values, Apple
+  silicon), against 0.13.1:
+
+  | Fill | 0.13.1 | 0.14.0 |
+  | --- | --- | --- |
+  | 1-D regular, `Double` | 750–800 M/s | 475 M/s |
+  | 1-D regular, `Weight` | 680–705 M/s | 460 M/s |
+  | 2-D regular, `Double` | 255–265 M/s | 223 M/s |
+  | 1-D profile, `Mean` | 443–453 M/s | 318 M/s |
+  | string category, 20 categories | 124–132 M/s | 106 M/s |
+
+  Two things keep it to that. The fast path finds the bin, whether the
+  fill is in range and its coordinate in one pass over the axis, instead
+  of matching on the axis kind again for each. And the sums are kept in
+  four partial sets, the bin choosing which, so that consecutive fills in
+  different bins do not wait on each other's additions; `fill_stats`
+  returns their total. This costs 256 bytes per 1-D histogram, 512 per
+  2-D and 768 per 3-D. `set_fill_stats(None)` on the empty histogram
+  turns the bookkeeping off for a fill that does not need it.
+- **oxistats 0.2.0** is a dependency (the chi-square and Kolmogorov
+  probabilities), at the tag oxifit and oxiroot name.
+
 ## [0.13.1]
 
 ### Changed
