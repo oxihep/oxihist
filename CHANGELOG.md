@@ -6,6 +6,10 @@ Notable changes to oxihist, by release. The format follows
 
 ## [Unreleased]
 
+## [0.15.0]
+
+One way to name a histogram. Breaking; see **Removed**.
+
 ### Removed
 
 - **Breaking: `.name(..)` and `.title(..)` on the `Hist` builder.** A
