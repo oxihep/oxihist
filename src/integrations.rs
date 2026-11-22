@@ -29,6 +29,24 @@ mod plot {
             axis.is_categorical()
                 .then(|| (0..axis.size()).filter_map(|i| axis.bin_label(i)).collect())
         }
+        fn underflow(&self) -> Option<(f64, f64)> {
+            self.flow_bin(-1)
+        }
+        fn overflow(&self) -> Option<(f64, f64)> {
+            self.flow_bin(crate::cast::signed(self.axis(0).size()))
+        }
+    }
+
+    impl<S: Storage> Histogram<S, 1> {
+        /// The value and uncertainty of flow bin `idx`, when the axis keeps
+        /// it. A categorical axis has no "below" or "above" to draw.
+        fn flow_bin(&self, idx: isize) -> Option<(f64, f64)> {
+            if self.axis(0).is_categorical() {
+                return None;
+            }
+            let bin = self.bin([idx])?;
+            Some((S::value(bin), S::variance(bin).max(0.0).sqrt()))
+        }
     }
 
     impl<S: Storage> Hist2dData for Histogram<S, 2> {
@@ -64,6 +82,23 @@ mod plot {
             for svg in [ax.to_svg_string(), ax2.to_svg_string()] {
                 assert!(svg.starts_with("<svg") && svg.ends_with("</svg>"));
             }
+        }
+
+        #[test]
+        fn flow_bins_reach_the_plot() {
+            use oxiplot::Hist1dData;
+            let mut h = Hist::reg(4, 0.0, 4.0).weight();
+            h.fill(-1.0);
+            for _ in 0..4 {
+                h.fill(9.0);
+            }
+            assert_eq!(h.underflow(), Some((1.0, 1.0)));
+            assert_eq!(h.overflow(), Some((4.0, 2.0)));
+            // No flow bins kept, or a categorical axis: nothing to show.
+            let bare = Hist::reg(4, 0.0, 4.0).no_flow().double();
+            assert_eq!((bare.underflow(), bare.overflow()), (None, None));
+            let cat = Hist::str_cat(&["a"]).double();
+            assert_eq!((cat.underflow(), cat.overflow()), (None, None));
         }
 
         #[test]
