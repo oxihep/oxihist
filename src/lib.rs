@@ -6,7 +6,7 @@
 //! ```
 //! use oxihist::Hist;
 //!
-//! let mut h = Hist::reg(50, 0.0, 100.0).label("$p_T$ [GeV]").name("pt").weight();
+//! let mut h = Hist::reg(50, 0.0, 100.0).label("$p_T$ [GeV]").weight().named("pt");
 //! h.fill(42.0);
 //! h.fill_weight(17.0, 0.5);
 //! assert_eq!(h.integral(false), 1.5);

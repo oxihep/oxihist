@@ -6,6 +6,12 @@ Notable changes to oxihist, by release. The format follows
 
 ## [Unreleased]
 
+### Removed
+
+- **Breaking: `.name(..)` and `.title(..)` on the `Hist` builder.** A
+  histogram is named in one way, `.named(..)` and `.titled(..)` on the
+  histogram itself: `Hist::reg(50, 0.0, 100.0).weight().named("pt")`.
+
 ## [0.14.0]
 
 Exact fill statistics and the analysis methods oxiroot's ROOT histograms

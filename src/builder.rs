@@ -6,7 +6,7 @@
 //! use oxihist::Hist;
 //!
 //! // hist:  Hist.new.Reg(50, 0, 100, label="$p_T$").Weight()
-//! let h = Hist::reg(50, 0.0, 100.0).label("$p_T$ [GeV]").name("pt").weight();
+//! let h = Hist::reg(50, 0.0, 100.0).label("$p_T$ [GeV]").weight().named("pt");
 //! // 2-D, a regular and a variable axis:
 //! let h2 = Hist::reg(40, -4.0, 4.0).label("x").var(&[0.0, 1.0, 4.0, 10.0]).label("y").double();
 //! // A string category that grows as new categories are filled:
@@ -89,23 +89,9 @@ macro_rules! builder {
         #[must_use]
         pub struct $name {
             axes: Vec<Axis>,
-            name: String,
-            title: String,
         }
 
         impl $name {
-            /// Set the histogram's name.
-            pub fn name(mut self, name: impl Into<String>) -> Self {
-                self.name = name.into();
-                self
-            }
-
-            /// Set the histogram's title.
-            pub fn title(mut self, title: impl Into<String>) -> Self {
-                self.title = title.into();
-                self
-            }
-
             /// Label the last axis.
             pub fn label(mut self, label: impl Into<String>) -> Self {
                 self.last().label = label.into();
@@ -137,10 +123,7 @@ macro_rules! builder {
             }
 
             fn finish<S: Storage>(self) -> Histogram<S, $d> {
-                let mut h = Histogram::from_axes(self.axes);
-                h.name = self.name;
-                h.title = self.title;
-                h
+                Histogram::from_axes(self.axes)
             }
 
             /// `f64` counts ([`Double`]).
@@ -223,11 +206,7 @@ macro_rules! builder {
 
             fn push(mut self, axis: Axis) -> $next {
                 self.axes.push(axis);
-                $next {
-                    axes: self.axes,
-                    name: self.name,
-                    title: self.title,
-                }
+                $next { axes: self.axes }
             }
             )?
         }
@@ -250,10 +229,6 @@ builder!(Build3, 3, "A 3-D histogram under construction.", next =);
 
 impl Build1 {
     fn start(axis: Axis) -> Build1 {
-        Build1 {
-            axes: vec![axis],
-            name: String::new(),
-            title: String::new(),
-        }
+        Build1 { axes: vec![axis] }
     }
 }
