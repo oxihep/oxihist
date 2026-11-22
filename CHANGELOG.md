@@ -6,6 +6,23 @@ Notable changes to oxihist, by release. The format follows
 
 ## [Unreleased]
 
+## [0.16.0]
+
+oxiplot 0.12.0, and the flow bins of a histogram on a plot.
+
+### Added
+
+- **A 1-D histogram hands its underflow and overflow bins to oxiplot**
+  (`plot` feature), so `HistOpts::new().flow(Flow::Show)` draws them and
+  `Flow::Sum` folds them into the edge bins. An axis without a flow bin,
+  and a categorical axis, have none to show.
+
+### Changed
+
+- **oxiplot 0.12.0** behind the `plot` feature: Poisson error bars, hatches,
+  ratio helpers, a twin axis, experiment styles, and finer ticks (see its
+  changelog).
+
 ## [0.15.0]
 
 One way to name a histogram. Breaking; see **Removed**.
