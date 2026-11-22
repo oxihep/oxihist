@@ -24,7 +24,7 @@ oxihist = { git = "https://github.com/oxihep/oxihist", tag = "v0.14.0" }
 use oxihist::Hist;
 
 // hist:  Hist.new.Reg(50, 0, 100, label="$p_T$").Weight()
-let mut h = Hist::reg(50, 0.0, 100.0).label("$p_T$ [GeV]").name("pt").weight();
+let mut h = Hist::reg(50, 0.0, 100.0).label("$p_T$ [GeV]").weight().named("pt");
 h.fill(42.0);
 h.fill_weight(17.0, 0.5);
 assert_eq!(h.value([8]), Some(0.5));       // bins are numbered from 0

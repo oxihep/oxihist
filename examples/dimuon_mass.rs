@@ -69,8 +69,8 @@ fn main() {
     let mut toy = Toy(91);
     let mut m_mumu = Hist::reg(60, 60.0, 120.0)
         .label("$m_{\\mu\\mu}$ [GeV]")
-        .name("m_mumu")
-        .weight();
+        .weight()
+        .named("m_mumu");
     let mut leading_pt = Hist::reg(40, 0.0, 80.0)
         .label("leading muon $p_T$ [GeV]")
         .weight();
