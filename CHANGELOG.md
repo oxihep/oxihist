@@ -6,6 +6,13 @@ Notable changes to oxihist, by release. The format follows
 
 ## [Unreleased]
 
+## [0.17.1]
+
+### Changed
+
+- **oxistats 0.2.1** (`erf` and `erfc` 16× faster, to a few ulps),
+  **oxifit 0.10.1** and **oxiplot 0.13.1**.
+
 ## [0.17.0]
 
 oxifit 0.10.0 and oxiplot 0.13.0.
