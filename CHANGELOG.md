@@ -6,6 +6,16 @@ Notable changes to oxihist, by release. The format follows
 
 ## [Unreleased]
 
+## [0.17.0]
+
+oxifit 0.10.0 and oxiplot 0.13.0.
+
+### Changed
+
+- **oxifit 0.10.0** (the `fit` feature) and **oxiplot 0.13.0** (the `plot`
+  feature, which oxiplot moved to oxifit 0.10.0 too). Breaking for `fit`:
+  `FitData` is implemented for oxifit 0.10's trait.
+
 ## [0.16.0]
 
 oxiplot 0.12.0, and the flow bins of a histogram on a plot.
