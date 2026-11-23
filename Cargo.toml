@@ -1,6 +1,6 @@
 [package]
 name = "oxihist"
-version = "0.17.0"
+version = "0.17.1"
 edition = "2024"
 rust-version = "1.100"
 license = "MIT"
@@ -19,19 +19,19 @@ serde = { version = "1", features = ["derive"], optional = true }
 # Until these are on crates.io they are git dependencies on release tags;
 # `version` is kept so the switch is just dropping `git`/`tag`. They must name
 # the same tags oxiroot does, so one copy of each is built.
-oxiplot = { git = "https://github.com/oxihep/oxiplot", tag = "v0.13.0", version = "0.13.0", default-features = false, optional = true }
-oxifit = { git = "https://github.com/oxihep/oxifit", tag = "v0.10.0", version = "0.10.0", optional = true }
+oxiplot = { git = "https://github.com/oxihep/oxiplot", tag = "v0.13.1", version = "0.13.1", default-features = false, optional = true }
+oxifit = { git = "https://github.com/oxihep/oxifit", tag = "v0.10.1", version = "0.10.1", optional = true }
 foldhash = "0.2"
 # The chi-square and Kolmogorov probabilities behind `chi2_test` and
 # `kolmogorov_test`; the tag oxifit and oxiroot name, so one copy is built.
-oxistats = { git = "https://github.com/oxihep/oxistats", tag = "v0.2.0", version = "0.2.0" }
+oxistats = { git = "https://github.com/oxihep/oxistats", tag = "v0.2.1", version = "0.2.1" }
 
 [dev-dependencies]
 proptest = "1"
 # `float_roundtrip`: the serde tests compare sums after a round trip, which
 # serde_json's default float parser can change in the last bit.
 serde_json = { version = "1", features = ["float_roundtrip"] }
-oxiplot = { git = "https://github.com/oxihep/oxiplot", tag = "v0.13.0", version = "0.13.0", default-features = false }
+oxiplot = { git = "https://github.com/oxihep/oxiplot", tag = "v0.13.1", version = "0.13.1", default-features = false }
 
 [features]
 # Parallel fill from a slice (`fill_par`).
