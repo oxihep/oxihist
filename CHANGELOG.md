@@ -6,6 +6,14 @@ Notable changes to oxihist, by release. The format follows
 
 ## [Unreleased]
 
+## [0.18.0]
+
+### Changed
+
+- **oxifit 0.11.0** (the `fit` feature; breaking there: `FitData` is
+  implemented for its trait) and **oxiplot 0.14.0** (the `plot` feature).
+  oxifit's formula engine moved to oxiformula; nothing else changes here.
+
 ## [0.17.1]
 
 ### Changed
